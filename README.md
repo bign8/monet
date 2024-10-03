@@ -19,3 +19,10 @@ This way, I can keep my focus on my work and only be alerted if something is wro
 - [ ] The CLI should be able to alert the user if a few pings have been missed.
 - [ ] IDK, AI wrote these
 - [ ] Single binary distribution (nobody likes managing dependencies).
+
+## Notes
+
+### Charting Libraries
+
+- [`ntcharts`](github.com/NimbleMarkets/ntcharts) - had way too many options and was a bit overwhelming
+- [`asciigraph`](github.com/guptarohit/asciigraph) - simple enough to get things started
