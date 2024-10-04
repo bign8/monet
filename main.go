@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"math"
-	"math/rand/v2"
 	"os"
 	"slices"
 	"time"
@@ -30,20 +28,14 @@ func main() {
 	// clockwise spinning dots
 	slices.Reverse(spinner.Dot.Frames)
 
-	pinger, err := probing.NewPinger(`1.1.1.1`)
+	// pinger, err := probing.NewPinger(`1.1.1.1`)
+	pinger, err := probing.NewPinger(`2606:4700:4700::1111`)
 	chk(`Error creating pinger`, err)
-	pinger.Interval = time.Second
+	pinger.Interval = 100 * time.Millisecond
 
 	m := model{
 		ping: pinger,
 		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
-	}
-
-	// generate a bunch of random starter data (testing the graph width issues)
-	// min 35, max 55
-	for i := 0; i < 200; i++ {
-		n := rand.Float64()*20 + 35
-		m.data = append(m.data, n)
 	}
 
 	p := tea.NewProgram(m)
@@ -79,7 +71,6 @@ type model struct {
 	spin     spinner.Model
 	line     string
 	quitting bool
-	data     []float64
 	w, h     int
 }
 
@@ -107,18 +98,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 	case *probing.Packet:
 		if msg.Rtt == 0 {
-			m.line = msg.Addr + `: wait`
+			m.line = msg.Addr + `: ??.???ms`
 		} else {
-			ms := float64(msg.Rtt.Microseconds()) / 1000
-			m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, ms)
-			m.data = append(m.data, ms)
-
-			if m.w != 0 {
-				maxPoints := m.w - 3 /* precision */ - 1 /* padding */ - 1 /* axis */
-				if len(m.data) > maxPoints {
-					m.data = m.data[len(m.data)-maxPoints:]
-				}
-			}
+			m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, dur2ms(msg.Rtt))
 		}
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
@@ -142,38 +124,33 @@ func (m model) View() string {
 	}
 	line := m.line + "\n"
 	head := lipgloss.Place(m.w, 2, lipgloss.Center, lipgloss.Center, line)
-	if len(m.data) == 0 && m.w == 0 {
+
+	stats := m.ping.Statistics()
+	if len(stats.Rtts) < 2 || m.w == 0 {
 		return head
 	}
 
-	// TODO: do math in Update and try to use a running average or compute it (and the std dev) incrementally
-	// not that it really matters for <200 points... but it's for fun... so why not have fun?... is math fun?... do I have stockholm syndrome?
-
-	var mean float64
-	for _, v := range m.data {
-		mean += v
+	maxPoints := m.w - 3 /* precision */ - 1 /* padding */ - 1 /* axis */
+	if len(stats.Rtts) > maxPoints {
+		stats.Rtts = stats.Rtts[len(stats.Rtts)-maxPoints:]
 	}
-	mean /= float64(len(m.data))
 
-	var standard_deviation float64
-	for _, v := range m.data {
-		diff := v - mean
-		standard_deviation += diff * diff // square
+	points := make([]float64, len(stats.Rtts))
+	for i, d := range stats.Rtts {
+		points[i] = dur2ms(d)
 	}
-	standard_deviation /= float64(len(m.data)) // divide by population size
-	standard_deviation = math.Sqrt(standard_deviation)
 
 	chart := asciigraph.PlotMany(
 		[][]float64{
-			slices.Repeat([]float64{mean}, len(m.data)),
-			slices.Repeat([]float64{standard_deviation + mean}, len(m.data)),
-			slices.Repeat([]float64{standard_deviation*2 + mean}, len(m.data)),
-			slices.Repeat([]float64{standard_deviation*3 + mean}, len(m.data)),
-			m.data,
+			slices.Repeat([]float64{dur2ms(stats.AvgRtt)}, maxPoints),
+			slices.Repeat([]float64{dur2ms(stats.StdDevRtt + stats.AvgRtt)}, maxPoints),
+			slices.Repeat([]float64{dur2ms(stats.StdDevRtt*2 + stats.AvgRtt)}, maxPoints),
+			slices.Repeat([]float64{dur2ms(stats.StdDevRtt*3 + stats.AvgRtt)}, maxPoints),
+			points,
 		},
 		asciigraph.Precision(1), // decimals
 		asciigraph.Width(m.w-3 /* precision */ -1 /* padding */ -1 /* axis */),
-		asciigraph.Height(m.h-4-6 /* caption */), // -4 for spinner, title padding, and something else
+		asciigraph.Height(20), //m.h-4-6 /* caption */), // -4 for spinner, title padding, and something else
 		asciigraph.SeriesColors(
 			asciigraph.Green,
 			asciigraph.Yellow,
@@ -192,4 +169,8 @@ func (m model) View() string {
 	)
 
 	return head + "\n" + chart
+}
+
+func dur2ms(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000
 }
