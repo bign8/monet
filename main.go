@@ -123,6 +123,13 @@ func (m model) View() string {
 		return `Bye-bye` + "\n" // newline needed to not replace content on final terminal
 	}
 	line := m.line + "\n"
+
+	const buffer = 3 /* precision */ + 1 /* padding */ + 1 /* axis */ + 3 /* offset? */
+
+	maxPoints := m.w - buffer - 1 /* off by one? */
+
+	line += fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
+
 	head := lipgloss.Place(m.w, 2, lipgloss.Center, lipgloss.Center, line)
 
 	stats := m.ping.Statistics()
@@ -130,15 +137,26 @@ func (m model) View() string {
 		return head
 	}
 
-	maxPoints := m.w - 3 /* precision */ - 1 /* padding */ - 1 /* axis */
 	if len(stats.Rtts) > maxPoints {
 		stats.Rtts = stats.Rtts[len(stats.Rtts)-maxPoints:]
 	}
 
 	points := make([]float64, len(stats.Rtts))
 	for i, d := range stats.Rtts {
-		points[i] = dur2ms(d)
+		// cap the data between 99.9 and 10.0 to ensure axis is constant width
+		v := dur2ms(d)
+		points[i] = min(max(v, 10), 99.9)
+		if v != points[i] {
+			// TODO: signify truncated value
+		}
 	}
+
+	// TODO: width is based on the number of characters in the axis title
+	// 23.3  = 4 characters
+	// 192   = 3 characters
+	// 12345 = 5 characters
+
+	// TODO: manually cap data to exist within a reasonable range
 
 	chart := asciigraph.PlotMany(
 		[][]float64{
@@ -149,7 +167,7 @@ func (m model) View() string {
 			points,
 		},
 		asciigraph.Precision(1), // decimals
-		asciigraph.Width(m.w-3 /* precision */ -1 /* padding */ -1 /* axis */),
+		// asciigraph.Width(m.w-buffer), // chart area (not counting labels, axis, etc)
 		asciigraph.Height(20), //m.h-4-6 /* caption */), // -4 for spinner, title padding, and something else
 		asciigraph.SeriesColors(
 			asciigraph.Green,
@@ -163,10 +181,26 @@ func (m model) View() string {
 			"1 deviation",
 			"2 deviations",
 			"3 deviations",
-			"1.1.1.1",
+			stats.Addr,
 		),
 		asciigraph.Caption(m.spin.View()+" Ping delay in ms"), // is this needed?
 	)
+
+	var style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.Border{
+			Top:         `-`,
+			Bottom:      `-`,
+			Left:        `|`,
+			Right:       `|`,
+			TopLeft:     `+`,
+			TopRight:    `+`,
+			BottomLeft:  `+`,
+			BottomRight: `+`,
+		}).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color(`#FF0000`))
+
+	chart = style.Render(chart)
 
 	return head + "\n" + chart
 }
