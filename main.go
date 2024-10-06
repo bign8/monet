@@ -7,6 +7,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -34,6 +36,25 @@ func main() {
 	pinger.Interval = 100 * time.Millisecond
 
 	m := model{
+		keys: keyMap{
+			Fast: key.NewBinding(
+				key.WithKeys(`f`),
+				key.WithHelp(`f`, `Fast mode`),
+			),
+			Slow: key.NewBinding(
+				key.WithKeys(`s`),
+				key.WithHelp(`s`, `Slow mode`),
+			),
+			Help: key.NewBinding(
+				key.WithKeys(`?`),
+				key.WithHelp(`?`, `Help`),
+			),
+			Quit: key.NewBinding(
+				key.WithKeys("q", "esc", "ctrl+c"),
+				key.WithHelp("q", "quit"),
+			),
+		},
+		help: help.New(),
 		ping: pinger,
 		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
@@ -66,7 +87,27 @@ func main() {
 
 }
 
+type keyMap struct {
+	Fast key.Binding
+	Slow key.Binding
+	Help key.Binding
+	Quit key.Binding
+}
+
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Help, k.Quit}
+}
+
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Fast, k.Slow},
+		{k.Help, k.Quit},
+	}
+}
+
 type model struct {
+	keys     keyMap
+	help     help.Model
 	ping     *probing.Pinger
 	spin     spinner.Model
 	line     string
@@ -76,7 +117,7 @@ type model struct {
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		m.spin.Tick,                       // start spinner
+		// m.spin.Tick,                       // start spinner
 		tea.SetWindowTitle(`Checking...`), // get a fun window title going!
 	)
 }
@@ -84,10 +125,21 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// TODO: send ctrl+C to the ping command + output the output as the final message
-		m.quitting = true
-		m.ping.Stop()
-		return m, tea.Quit
+		switch {
+		case key.Matches(msg, m.keys.Fast):
+			return m, tea.Println(`faster!!!`)
+		case key.Matches(msg, m.keys.Slow):
+			return m, tea.Println(`slower...`)
+		case key.Matches(msg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
+		case key.Matches(msg, m.keys.Quit):
+			m.quitting = true
+			m.ping.Stop()
+			// TODO: wait for final statistics?
+			return m, tea.Quit
+		default:
+			return m, tea.Printf(`unknown key: %v`, msg)
+		}
 	case string:
 		m.line = msg
 	case spinner.TickMsg:
@@ -96,6 +148,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+		m.help.Width = msg.Width
 	case *probing.Packet:
 		if msg.Rtt == 0 {
 			m.line = msg.Addr + `: ??.???ms`
@@ -202,7 +255,7 @@ func (m model) View() string {
 
 	chart = style.Render(chart)
 
-	return head + "\n" + chart
+	return head + "\n" + chart + "\n" + m.help.View(m.keys)
 }
 
 func dur2ms(d time.Duration) float64 {
