@@ -25,15 +25,9 @@ func chk(name string, err error) {
 
 func main() {
 	// TODO: start pinging some well known IPs 1.0.0.1, 1.1.1.1
-	// monitor the response time and print the active status
 
 	// clockwise spinning dots
 	slices.Reverse(spinner.Dot.Frames)
-
-	// pinger, err := probing.NewPinger(`1.1.1.1`)
-	pinger, err := probing.NewPinger(`2606:4700:4700::1111`)
-	chk(`Error creating pinger`, err)
-	pinger.Interval = 100 * time.Millisecond
 
 	m := model{
 		keys: keyMap{
@@ -55,36 +49,14 @@ func main() {
 			),
 		},
 		help: help.New(),
-		ping: pinger,
+		ping: probing.New(`2606:4700:4700::1111`),
 		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
 
 	p := tea.NewProgram(m)
 
-	pinger.OnSend = func(ping *probing.Packet) {
-		p.Send(ping)
-	}
-	pinger.OnSendError = func(ping *probing.Packet, err error) {
-		p.Send(tea.Printf(`on-send-err: %#v; %s`, ping, err.Error()))
-	}
-	pinger.OnRecv = func(ping *probing.Packet) {
-		p.Send(ping)
-	}
-	pinger.OnFinish = func(s *probing.Statistics) {
-		p.Send(tea.Printf(`%#v`, s))
-	}
-	// pinger.OnRecvError = func(err error) {
-	// 	// TODO: ignore i/o timeouts (it's a read loop)
-	// 	p.Send(tea.Printf(`on-recv-err: %s`, err.Error()))
-	// }
-
-	go func() {
-		chk(`string go pinger`, m.ping.Run())
-	}()
-
-	_, err = p.Run()
+	_, err := p.Run()
 	chk(`Error running program`, err)
-
 }
 
 type keyMap struct {
@@ -109,27 +81,89 @@ type model struct {
 	keys     keyMap
 	help     help.Model
 	ping     *probing.Pinger
+	wait     bool // are we waiting for a response??
 	spin     spinner.Model
 	line     string
-	quitting bool
+	quitting bool // TODO: rename `quit` (why not have all state be 4 chars long?)
 	w, h     int
 }
 
+type startCmd struct{}
+
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
+		func() tea.Msg {
+			return startCmd{}
+		},
 		// m.spin.Tick,                       // start spinner
 		tea.SetWindowTitle(`Checking...`), // get a fun window title going!
 	)
 }
 
+type wrappedMsg struct {
+	more chan tea.Msg
+	this tea.Msg
+}
+
+func (m *model) rescale(next time.Duration) tea.Cmd {
+	pinger := probing.New(m.ping.Addr())
+	pinger.Interval = next
+	m.ping.Stop()
+	m.ping = pinger
+
+	// TODO: retain the existing statistics
+
+	events := make(chan tea.Msg, 20)
+
+	pinger.OnSend = func(ping *probing.Packet) {
+		events <- ping
+	}
+	pinger.OnSendError = func(ping *probing.Packet, err error) {
+		events <- tea.Printf(`on-send-err: %#v; %s`, ping, err.Error())
+	}
+	pinger.OnRecv = func(ping *probing.Packet) {
+		events <- ping
+	}
+	// pinger.OnRecvError = func(err error) {
+	// 	if errors.Is(err, os.ErrDeadlineExceeded) {
+	// 		return
+	// 	}
+	// 	// TODO: ignore i/o timeouts (it's a read loop)
+	// 	p.Send(tea.Printf(`on-recv-err: %s`, err.Error()))
+	// }
+
+	return tea.Batch(
+		func() tea.Msg {
+			return wrappedMsg{
+				more: events,
+				this: <-events,
+			}
+		},
+		func() tea.Msg {
+			return m.ping.Run()
+		},
+	)
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case startCmd:
+		cmd := m.rescale(100 * time.Millisecond)
+		return m, cmd
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Fast):
-			return m, tea.Println(`faster!!!`)
+			if m.wait {
+				// TODO: queue a key to be processed after the response is received
+			}
+			cmd := m.rescale(m.ping.Interval / 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
+			return m, tea.Batch(nil, tea.Println(`faster!!!`), cmd)
 		case key.Matches(msg, m.keys.Slow):
-			return m, tea.Println(`slower...`)
+			if m.wait {
+				// TODO: queue a key to be processed after the response is received
+			}
+			cmd := m.rescale(m.ping.Interval * 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
+			return m, tea.Batch(nil, tea.Println(`slower...`), cmd)
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		case key.Matches(msg, m.keys.Quit):
@@ -140,6 +174,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m, tea.Printf(`unknown key: %v`, msg)
 		}
+	case wrappedMsg:
+		m, cmd := m.Update(msg.this)
+		return m, tea.Batch(cmd, func() tea.Msg {
+			return wrappedMsg{
+				more: msg.more,
+				this: <-msg.more,
+			}
+		})
 	case string:
 		m.line = msg
 	case spinner.TickMsg:
@@ -152,8 +194,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case *probing.Packet:
 		if msg.Rtt == 0 {
 			m.line = msg.Addr + `: ??.???ms`
+			m.wait = true
 		} else {
 			m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, dur2ms(msg.Rtt))
+			m.wait = false // what about errors?
 		}
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
@@ -230,13 +274,13 @@ func (m model) View() string {
 			asciigraph.Blue,
 		),
 		asciigraph.SeriesLegends(
-			"mean",
+			"average",
 			"1 deviation",
 			"2 deviations",
 			"3 deviations",
 			stats.Addr,
 		),
-		asciigraph.Caption(m.spin.View()+" Ping delay in ms"), // is this needed?
+		asciigraph.Caption(m.spin.View()+" Ping every "+m.ping.Interval.String()), // is this needed?
 	)
 
 	var style = lipgloss.NewStyle().
@@ -277,7 +321,7 @@ func (m model) View() string {
 		Margin(1).
 		Width(m.w - 2 - 2). // 2 for border; 2 for margin
 		Height(3).
-		Blink(true).
+		Blink(maximum >= 100).
 		Render(message)
 
 	return warning + "\n" + head + "\n" + chart + "\n" + m.help.View(m.keys)

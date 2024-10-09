@@ -26,3 +26,12 @@ This way, I can keep my focus on my work and only be alerted if something is wro
 
 - [`ntcharts`](github.com/NimbleMarkets/ntcharts) - had way too many options and was a bit overwhelming
 - [`asciigraph`](github.com/guptarohit/asciigraph) - simple enough to get things started
+
+### Errors
+
+1. Left running a long time and saw a bunch of `on-send-err: &probing.Packet{Rtt:0, IPAddr:(*net.IPAddr)(0xc0000a4de0), Addr:"2600:6c66:0:4::6:c", Nbytes:32, Seq:16777, TTL:0, ID:2383}; write udp [::]:181->[2600:6c66:0:4::6:c]:0: sendto: network is unreachable` errors
+2. Left running a long time and came back to graph with crazy axis values (really small IIRC, like huge negative numbers).
+
+### Ideas
+
+- [ ] Replace asciigraph with home rolled solution to be able to "XXX" out a column where we are expecting a response but didn't get one.
