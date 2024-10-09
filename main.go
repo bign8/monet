@@ -95,7 +95,7 @@ func (m model) Init() tea.Cmd {
 		func() tea.Msg {
 			return startCmd{}
 		},
-		// m.spin.Tick,                       // start spinner
+		m.spin.Tick,                       // start spinner
 		tea.SetWindowTitle(`Checking...`), // get a fun window title going!
 	)
 }
@@ -157,13 +157,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// TODO: queue a key to be processed after the response is received
 			}
 			cmd := m.rescale(m.ping.Interval / 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
-			return m, tea.Batch(nil, tea.Println(`faster!!!`), cmd)
+			return m, cmd
 		case key.Matches(msg, m.keys.Slow):
 			if m.wait {
 				// TODO: queue a key to be processed after the response is received
 			}
 			cmd := m.rescale(m.ping.Interval * 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
-			return m, tea.Batch(nil, tea.Println(`slower...`), cmd)
+			return m, cmd
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		case key.Matches(msg, m.keys.Quit):
@@ -280,7 +280,7 @@ func (m model) View() string {
 			"3 deviations",
 			stats.Addr,
 		),
-		asciigraph.Caption(m.spin.View()+" Ping every "+m.ping.Interval.String()), // is this needed?
+		asciigraph.Caption(m.spin.View()+" Ping every "+m.ping.Interval.String()),
 	)
 
 	var style = lipgloss.NewStyle().
