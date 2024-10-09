@@ -241,6 +241,7 @@ func (m model) View() string {
 
 	var style = lipgloss.NewStyle().
 		BorderStyle(lipgloss.Border{
+			// useful for measuring height/width of resulting chart
 			Top:         `-`,
 			Bottom:      `-`,
 			Left:        `|`,
@@ -255,7 +256,31 @@ func (m model) View() string {
 
 	chart = style.Render(chart)
 
-	return head + "\n" + chart + "\n" + m.help.View(m.keys)
+	maximum := slices.Max(points)
+	if maximum < 50 {
+		return head + "\n" + chart + "\n" + m.help.View(m.keys)
+	}
+
+	color := lipgloss.Color(`#FF0000`)
+	message := `WARNING: high latency detected (>100ms)`
+	if maximum < 100 {
+		color = lipgloss.Color(`#FFA500`)
+		message = `WARNING: elevated latency detected (>50ms)`
+	}
+
+	var warning = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(color).
+		Foreground(color).
+		Bold(true).
+		Align(lipgloss.Center, lipgloss.Center).
+		Margin(1).
+		Width(m.w - 2 - 2). // 2 for border; 2 for margin
+		Height(3).
+		Blink(true).
+		Render(message)
+
+	return warning + "\n" + head + "\n" + chart + "\n" + m.help.View(m.keys)
 }
 
 func dur2ms(d time.Duration) float64 {
