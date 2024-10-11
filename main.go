@@ -26,6 +26,11 @@ func chk(name string, err error) {
 func main() {
 	// TODO: start pinging some well known IPs 1.0.0.1, 1.1.1.1
 
+	target := `2606:4700:4700::1111`
+	if len(os.Args) > 1 {
+		target = os.Args[1]
+	}
+
 	// clockwise spinning dots
 	slices.Reverse(spinner.Dot.Frames)
 
@@ -49,7 +54,7 @@ func main() {
 			),
 		},
 		help: help.New(),
-		ping: probing.New(`2606:4700:4700::1111`),
+		ping: probing.New(target),
 		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
 
