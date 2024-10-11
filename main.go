@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -123,23 +124,24 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 	m.ping = pinger
 
 	events := make(chan tea.Msg, 20)
+	const timeFormat = `2006-01-02 15:04:05.000`
 
 	pinger.OnSend = func(ping *probing.Packet) {
 		events <- ping
 	}
 	pinger.OnSendError = func(ping *probing.Packet, err error) {
-		events <- tea.Printf(`on-send-err: %#v; %s`, ping, err.Error())
+		events <- tea.Printf(`%s: on-send-err: %#v; %s`, time.Now().Format(timeFormat), ping, err.Error())
 	}
 	pinger.OnRecv = func(ping *probing.Packet) {
 		events <- ping
 	}
-	// pinger.OnRecvError = func(err error) {
-	// 	if errors.Is(err, os.ErrDeadlineExceeded) {
-	// 		return
-	// 	}
-	// 	// TODO: ignore i/o timeouts (it's a read loop)
-	// 	p.Send(tea.Printf(`on-recv-err: %s`, err.Error()))
-	// }
+	pinger.OnRecvError = func(err error) {
+		// TODO: ignore i/o timeouts (it's a read loop)
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return
+		}
+		events <- tea.Printf(`%s: on-recv-err: %s`, time.Now().Format(timeFormat), err.Error())
+	}
 
 	return tea.Batch(
 		func() tea.Msg {
