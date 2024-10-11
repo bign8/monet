@@ -84,13 +84,14 @@ func (k keyMap) FullHelp() [][]key.Binding {
 }
 
 type model struct {
-	keys     keyMap
-	help     help.Model
-	ping     *probing.Pinger
-	wait     bool // are we waiting for a response??
-	spin     spinner.Model
-	quitting bool // TODO: rename `quit` (why not have all state be 4 chars long?)
-	w, h     int
+	keys     keyMap          // key bindings
+	help     help.Model      // help indicators
+	ping     *probing.Pinger // actual thing doing the pinging
+	wait     bool            // are we waiting for a response??
+	spin     spinner.Model   // indicator to ensure we're still alive
+	tail     []time.Duration // data-points before interval changed
+	quitting bool            // TODO: rename `quit` (why not have all state be 4 chars long?)
+	w, h     int             // world size
 }
 
 type startCmd struct{}
@@ -114,9 +115,12 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 	pinger := probing.New(m.ping.Addr())
 	pinger.Interval = next
 	m.ping.Stop()
-	m.ping = pinger
 
+	// Retaining existing data-points
 	// TODO: retain the existing statistics
+	m.tail = append(m.tail, m.ping.Statistics().Rtts...)
+
+	m.ping = pinger
 
 	events := make(chan tea.Msg, 20)
 
@@ -151,6 +155,12 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+
+	// ensure tail doesn't get TOO long
+	if len(m.tail) > 10000 {
+		m.tail = m.tail[len(m.tail)-1000:]
+	}
+
 	switch msg := msg.(type) {
 	case startCmd:
 		cmd := m.rescale(100 * time.Millisecond)
@@ -234,6 +244,9 @@ func (m model) View() string {
 	head := lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	stats := m.ping.Statistics()
+
+	// warning, not performant at ALL
+	stats.Rtts = append(m.tail, stats.Rtts...)
 	if len(stats.Rtts) < 2 || m.w == 0 {
 		return head
 	}
