@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"slices"
 	"time"
@@ -88,7 +89,6 @@ type model struct {
 	ping     *probing.Pinger
 	wait     bool // are we waiting for a response??
 	spin     spinner.Model
-	line     string
 	quitting bool // TODO: rename `quit` (why not have all state be 4 chars long?)
 	w, h     int
 }
@@ -187,8 +187,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				this: <-msg.more,
 			}
 		})
-	case string:
-		m.line = msg
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -198,10 +196,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Width = msg.Width
 	case *probing.Packet:
 		if msg.Rtt == 0 {
-			m.line = msg.Addr + `: ??.???ms`
 			m.wait = true
 		} else {
-			m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, dur2ms(msg.Rtt))
+			// m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, dur2ms(msg.Rtt))
 			m.wait = false // what about errors?
 		}
 	case tea.Cmd:
@@ -224,15 +221,17 @@ func (m model) View() string {
 	if m.quitting {
 		return `Bye-bye` + "\n" // newline needed to not replace content on final terminal
 	}
-	line := m.line + "\n"
 
-	const buffer = 3 /* precision */ + 1 /* padding */ + 1 /* axis */ + 3 /* offset? */
+	// TODO: width is based on the number of characters in the axis title
+	// 23.3  = 4 characters
+	// 192   = 3 characters
+	// 12345 = 5 characters
+	const buffer = 3 /* precision */ + 1 /* padding */ + 1 /* axis */
+	maxPoints := m.w - buffer - 1                          /* off by one? */
 
-	maxPoints := m.w - buffer - 1 /* off by one? */
+	line := fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
 
-	line += fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
-
-	head := lipgloss.Place(m.w, 2, lipgloss.Center, lipgloss.Center, line)
+	head := lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	stats := m.ping.Statistics()
 	if len(stats.Rtts) < 2 || m.w == 0 {
@@ -253,23 +252,27 @@ func (m model) View() string {
 		}
 	}
 
-	// TODO: width is based on the number of characters in the axis title
-	// 23.3  = 4 characters
-	// 192   = 3 characters
-	// 12345 = 5 characters
+	// gather + print some of those running statistics
+	avg := dur2ms(stats.AvgRtt)
+	sd := dur2ms(stats.StdDevRtt)
+	sd1 := sd*1 + avg
+	sd2 := sd*2 + avg
+	sd3 := sd*3 + avg
+	line = fmt.Sprintf(`avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, avg, sd, sd1, sd2, sd3)
+	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// TODO: manually cap data to exist within a reasonable range
 
 	chart := asciigraph.PlotMany(
 		[][]float64{
-			slices.Repeat([]float64{dur2ms(stats.AvgRtt)}, maxPoints),
-			slices.Repeat([]float64{dur2ms(stats.StdDevRtt + stats.AvgRtt)}, maxPoints),
-			slices.Repeat([]float64{dur2ms(stats.StdDevRtt*2 + stats.AvgRtt)}, maxPoints),
-			slices.Repeat([]float64{dur2ms(stats.StdDevRtt*3 + stats.AvgRtt)}, maxPoints),
+			slices.Repeat([]float64{avg}, maxPoints),
+			slices.Repeat([]float64{sd1}, maxPoints),
+			slices.Repeat([]float64{sd2}, maxPoints),
+			slices.Repeat([]float64{sd3}, maxPoints),
 			points,
 		},
 		asciigraph.Precision(1), // decimals
-		// asciigraph.Width(m.w-buffer), // chart area (not counting labels, axis, etc)
+		// asciigraph.Width(m.w-buffer), // chart area (not counting labels, axis, etc) // NOTE: controlled by maxPoints instead
 		asciigraph.Height(20), //m.h-4-6 /* caption */), // -4 for spinner, title padding, and something else
 		asciigraph.SeriesColors(
 			asciigraph.Green,
@@ -286,24 +289,12 @@ func (m model) View() string {
 			stats.Addr,
 		),
 		asciigraph.Caption(m.spin.View()+" Ping every "+m.ping.Interval.String()),
+
+		// prevent axis from changing rapidly
+		// TODO: ensure there are HEIGHT unique axis values (with 2 decimal places)
+		asciigraph.LowerBound(math.Floor(min(slices.Min(points), avg))),
+		asciigraph.UpperBound(math.Ceil(max(slices.Max(points), sd3))),
 	)
-
-	var style = lipgloss.NewStyle().
-		BorderStyle(lipgloss.Border{
-			// useful for measuring height/width of resulting chart
-			Top:         `-`,
-			Bottom:      `-`,
-			Left:        `|`,
-			Right:       `|`,
-			TopLeft:     `+`,
-			TopRight:    `+`,
-			BottomLeft:  `+`,
-			BottomRight: `+`,
-		}).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color(`#FF0000`))
-
-	chart = style.Render(chart)
 
 	maximum := slices.Max(points)
 	if maximum < 50 {
