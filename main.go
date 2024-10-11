@@ -238,8 +238,10 @@ func (m model) View() string {
 	// 23.3  = 4 characters
 	// 192   = 3 characters
 	// 12345 = 5 characters
-	const buffer = 3 /* precision */ + 1 /* padding */ + 1 /* axis */
-	maxPoints := m.w - buffer - 1                          /* off by one? */
+	// [space][number][space][y-axis] - typically seeing 4 character numbers, making buffer 6
+	// y-axis itself counts as the 1st data-point (cause it's drawn with ┤ and ┼ characters)
+	const buffer = 3 /* precision */ + 1 /* padding */ + 2 /* axis */
+	maxPoints := m.w - buffer
 
 	line := fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
 
