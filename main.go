@@ -204,7 +204,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			// TODO: use slices.BinarySearchFunc to find the right index
 			var found bool
-			for i, p := range m.data {
+			// NOTE: going backwards as sequence values are re-used when rescaling the pinger
+			// This'll ensure previous values aren't updated, only the newest sequence value
+			// TODO: this is fragile AF! (but it works for now)
+			for i := len(m.data) - 1; i >= 0; i-- {
+				p := m.data[i]
 				if p.Seq == msg.Seq {
 					found = true
 					m.data[i].Rtt = dur2ms(msg.Rtt)
@@ -280,6 +284,17 @@ func (m model) View() string {
 	line = fmt.Sprintf(`avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, avg, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
+	// remove NaNs from the data
+	nanLessPoints := make([]float64, 0, len(points))
+	for _, v := range points {
+		if !math.IsNaN(v) {
+			nanLessPoints = append(nanLessPoints, v)
+		}
+	}
+	if len(nanLessPoints) == 0 {
+		return head + "\n" + m.help.View(m.keys)
+	}
+
 	// TODO: manually cap data to exist within a reasonable range
 
 	chart := asciigraph.PlotMany(
@@ -311,9 +326,15 @@ func (m model) View() string {
 
 		// prevent axis from changing rapidly
 		// TODO: ensure there are HEIGHT unique axis values (with 2 decimal places)
-		asciigraph.LowerBound(math.Floor(min(slices.Min(points), avg))),
-		asciigraph.UpperBound(math.Ceil(max(slices.Max(points), sd3))),
+		asciigraph.LowerBound(math.Floor(min(slices.Min(nanLessPoints), avg))),
+		asciigraph.UpperBound(math.Ceil(max(slices.Max(nanLessPoints), sd3))),
 	)
+
+	// if NaNs are present, assume the data just hasn't gotten back yet; no alert
+	// TODO: make this a little more robust (e.g. if NaNs are present for a long time, alert)
+	if slices.ContainsFunc(points, math.IsNaN) {
+		return head + "\n" + chart + "\n" + m.help.View(m.keys)
+	}
 
 	maximum := slices.Max(points)
 	if maximum < 50 {
