@@ -88,7 +88,6 @@ type model struct {
 	keys     keyMap          // key bindings
 	help     help.Model      // help indicators
 	ping     *probing.Pinger // actual thing doing the pinging
-	wait     bool            // are we waiting for a response??
 	spin     spinner.Model   // indicator to ensure we're still alive
 	tail     []time.Duration // data-points before interval changed
 	quitting bool            // TODO: rename `quit` (why not have all state be 4 chars long?)
@@ -115,6 +114,7 @@ type wrappedMsg struct {
 func (m *model) rescale(next time.Duration) tea.Cmd {
 	pinger := probing.New(m.ping.Addr())
 	pinger.Interval = next
+	// pinger.SetID(m.ping.ID()) // DO NOT WANT THIS
 	m.ping.Stop()
 
 	// Retaining existing data-points
@@ -170,15 +170,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Fast):
-			if m.wait {
-				// TODO: queue a key to be processed after the response is received
-			}
 			cmd := m.rescale(m.ping.Interval / 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
 			return m, cmd
 		case key.Matches(msg, m.keys.Slow):
-			if m.wait {
-				// TODO: queue a key to be processed after the response is received
-			}
 			cmd := m.rescale(m.ping.Interval * 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
 			return m, cmd
 		case key.Matches(msg, m.keys.Help):
@@ -208,10 +202,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Width = msg.Width
 	case *probing.Packet:
 		if msg.Rtt == 0 {
-			m.wait = true
+			return m, tea.Printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
 		} else {
 			// m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, dur2ms(msg.Rtt))
-			m.wait = false // what about errors?
+			return m, tea.Printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
 		}
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
@@ -261,9 +255,9 @@ func (m model) View() string {
 
 	points := make([]float64, len(stats.Rtts))
 	for i, d := range stats.Rtts {
-		// cap the data between 99.9 and 10.0 to ensure axis is constant width
 		v := dur2ms(d)
-		points[i] = min(max(v, 10), 99.9)
+		// keep data in an interesting range (TODO: make this configurable + smarter)
+		points[i] = min(max(v, 0), 99.9)
 		if v != points[i] {
 			// TODO: signify truncated value
 		}
