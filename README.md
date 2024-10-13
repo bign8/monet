@@ -31,6 +31,11 @@ This way, I can keep my focus on my work and only be alerted if something is wro
 
 1. Left running a long time and saw a bunch of `on-send-err: &probing.Packet{Rtt:0, IPAddr:(*net.IPAddr)(0xc0000a4de0), Addr:"2600:6c66:0:4::6:c", Nbytes:32, Seq:16777, TTL:0, ID:2383}; write udp [::]:181->[2600:6c66:0:4::6:c]:0: sendto: network is unreachable` errors
 2. Left running a long time and came back to graph with crazy axis values (really small IIRC, like huge negative numbers).
+    - reproduce by pinging a docker container, kill container, restore container... shows up occasionally in a few seconds.
+    - ![garbage](big-number-issue-deviations-way-off.png)
+    - avg is fine, sd is way off when printing.  -9223372036854.775808 is the number that is being printed.
+    - number is most negative float you can have https://stackoverflow.com/a/56989911
+    - Probably want to check and manage our own ping data + handle this timeout cleaner
 
 ### Ideas
 
