@@ -116,6 +116,11 @@ type wrappedMsg struct {
 	this tea.Msg
 }
 
+func printf(format string, args ...interface{}) tea.Cmd {
+	const timeFormat = `2006-01-02 15:04:05.000`
+	return tea.Printf(time.Now().Format(timeFormat)+`: `+format, args...)
+}
+
 func (m *model) rescale(next time.Duration) tea.Cmd {
 	pinger := probing.New(m.ping.Addr())
 	pinger.Interval = next
@@ -124,13 +129,12 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 	m.ping = pinger
 
 	events := make(chan tea.Msg, 20)
-	const timeFormat = `2006-01-02 15:04:05.000`
 
 	pinger.OnSend = func(ping *probing.Packet) {
 		events <- ping
 	}
 	pinger.OnSendError = func(ping *probing.Packet, err error) {
-		events <- tea.Printf(`%s: on-send-err: %#v; %s`, time.Now().Format(timeFormat), ping, err.Error())
+		events <- printf(`on-send-err: %#v; %s`, ping, err.Error())
 	}
 	pinger.OnRecv = func(ping *probing.Packet) {
 		events <- ping
@@ -140,7 +144,7 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 		if errors.Is(err, os.ErrDeadlineExceeded) {
 			return
 		}
-		events <- tea.Printf(`%s: on-recv-err: %s`, time.Now().Format(timeFormat), err.Error())
+		events <- printf(`on-recv-err: %s`, err.Error())
 	}
 
 	return tea.Batch(
@@ -177,7 +181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: wait for final statistics?
 			return m, tea.Quit
 		default:
-			return m, tea.Printf(`unknown key: %v`, msg)
+			return m, printf(`unknown key: %v`, msg)
 		}
 	case wrappedMsg:
 		m, cmd := m.Update(msg.this)
@@ -200,7 +204,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.w > 0 && len(m.data) > m.w {
 				m.data = m.data[len(m.data)-m.w:]
 			}
-			return m, tea.Printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
+			return m, printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
 		} else {
 			// TODO: use slices.BinarySearchFunc to find the right index
 			var found bool
@@ -216,16 +220,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if !found {
-				return m, tea.Printf("recv: id: %d; seq: %d; not found", msg.ID, msg.Seq)
+				return m, printf("recv: id: %d; seq: %d; not found", msg.ID, msg.Seq)
 			}
-			return m, tea.Printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
+			return m, printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
 		}
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
 		return m, msg
 	default:
 		if _, allowed := allowedMessages[fmt.Sprintf(`%T`, msg)]; !allowed {
-			return m, tea.Printf(`unhandled message: %T(%#v)`, msg, msg)
+			return m, printf(`unhandled message: %T(%#v)`, msg, msg)
 		}
 	}
 	return m, nil
