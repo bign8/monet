@@ -89,9 +89,14 @@ type model struct {
 	help     help.Model      // help indicators
 	ping     *probing.Pinger // actual thing doing the pinging
 	spin     spinner.Model   // indicator to ensure we're still alive
-	tail     []time.Duration // data-points before interval changed
+	data     []pingPoint     // stream of fired and potentially received packets
 	quitting bool            // TODO: rename `quit` (why not have all state be 4 chars long?)
 	w, h     int             // world size
+}
+
+type pingPoint struct {
+	Rtt float64 // in ms
+	Seq int
 }
 
 type startCmd struct{}
@@ -116,11 +121,6 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 	pinger.Interval = next
 	// pinger.SetID(m.ping.ID()) // DO NOT WANT THIS
 	m.ping.Stop()
-
-	// Retaining existing data-points
-	// TODO: retain the existing statistics
-	m.tail = append(m.tail, m.ping.Statistics().Rtts...)
-
 	m.ping = pinger
 
 	events := make(chan tea.Msg, 20)
@@ -157,12 +157,6 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-
-	// ensure tail doesn't get TOO long
-	if len(m.tail) > 10000 {
-		m.tail = m.tail[len(m.tail)-1000:]
-	}
-
 	switch msg := msg.(type) {
 	case startCmd:
 		cmd := m.rescale(100 * time.Millisecond)
@@ -202,9 +196,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Width = msg.Width
 	case *probing.Packet:
 		if msg.Rtt == 0 {
+			m.data = append(m.data, pingPoint{Rtt: math.NaN(), Seq: msg.Seq})
+			if m.w > 0 && len(m.data) > m.w {
+				m.data = m.data[len(m.data)-m.w:]
+			}
 			return m, tea.Printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
 		} else {
-			// m.line = fmt.Sprintf(`%s: %.3fms`, msg.Addr, dur2ms(msg.Rtt))
+			// TODO: use slices.BinarySearchFunc to find the right index
+			var found bool
+			for i, p := range m.data {
+				if p.Seq == msg.Seq {
+					found = true
+					m.data[i].Rtt = dur2ms(msg.Rtt)
+					break
+				}
+			}
+			if !found {
+				return m, tea.Printf("recv: id: %d; seq: %d; not found", msg.ID, msg.Seq)
+			}
 			return m, tea.Printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
 		}
 	case tea.Cmd:
@@ -241,21 +250,19 @@ func (m model) View() string {
 
 	head := lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
-	stats := m.ping.Statistics()
-
-	// warning, not performant at ALL
-	stats.Rtts = append(m.tail, stats.Rtts...)
-	if len(stats.Rtts) < 2 || m.w == 0 {
+	if len(m.data) < 1 || m.w == 0 {
 		return head
 	}
 
-	if len(stats.Rtts) > maxPoints {
-		stats.Rtts = stats.Rtts[len(stats.Rtts)-maxPoints:]
+	stream := m.data
+
+	if len(stream) > maxPoints {
+		stream = stream[len(stream)-maxPoints:]
 	}
 
-	points := make([]float64, len(stats.Rtts))
-	for i, d := range stats.Rtts {
-		v := dur2ms(d)
+	points := make([]float64, len(stream))
+	for i, d := range stream {
+		v := d.Rtt
 		// keep data in an interesting range (TODO: make this configurable + smarter)
 		points[i] = min(max(v, 0), 99.9)
 		if v != points[i] {
@@ -264,6 +271,7 @@ func (m model) View() string {
 	}
 
 	// gather + print some of those running statistics
+	stats := m.ping.Statistics()
 	avg := dur2ms(stats.AvgRtt)
 	sd := dur2ms(stats.StdDevRtt)
 	sd1 := sd*1 + avg
@@ -297,7 +305,7 @@ func (m model) View() string {
 			"1 deviation",
 			"2 deviations",
 			"3 deviations",
-			stats.Addr,
+			m.ping.Addr(),
 		),
 		asciigraph.Caption(m.spin.View()+" Ping every "+m.ping.Interval.String()),
 
