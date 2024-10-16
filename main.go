@@ -334,13 +334,7 @@ func (m model) View() string {
 		asciigraph.UpperBound(math.Ceil(max(slices.Max(nanLessPoints), sd3))),
 	)
 
-	// if NaNs are present, assume the data just hasn't gotten back yet; no alert
-	// TODO: make this a little more robust (e.g. if NaNs are present for a long time, alert)
-	if slices.ContainsFunc(points, math.IsNaN) {
-		return head + "\n" + chart + "\n" + m.help.View(m.keys)
-	}
-
-	maximum := slices.Max(points)
+	maximum := slices.Max(nanLessPoints)
 	if maximum < 50 {
 		return head + "\n" + chart + "\n" + m.help.View(m.keys)
 	}
