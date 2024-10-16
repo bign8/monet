@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/rand/v2"
 	"os"
 	"slices"
 	"time"
@@ -124,7 +125,15 @@ func printf(format string, args ...interface{}) tea.Cmd {
 func (m *model) rescale(next time.Duration) tea.Cmd {
 	pinger := probing.New(m.ping.Addr())
 	pinger.Interval = next
-	// pinger.SetID(m.ping.ID()) // DO NOT WANT THIS
+
+	// don't record RTTs (we're only interested in the last m.w points)
+	pinger.RecordRtts = false
+
+	// ensure we have a different ID when rescaling (to avoid sequence collisions)
+	for pinger.ID() == m.ping.ID() {
+		pinger.SetID(rand.IntN(math.MaxUint16))
+	}
+
 	m.ping.Stop()
 	m.ping = pinger
 
