@@ -52,8 +52,12 @@ func main() {
 				key.WithHelp(`?`, `Help`),
 			),
 			Quit: key.NewBinding(
-				key.WithKeys("q", "esc", "ctrl+c"),
-				key.WithHelp("q", "quit"),
+				key.WithKeys(`q`, `esc`, `ctrl+c`),
+				key.WithHelp(`q`, `quit`),
+			),
+			Reset: key.NewBinding(
+				key.WithKeys(`r`),
+				key.WithHelp(`r`, `Reset Stats`),
 			),
 		},
 		help: help.New(),
@@ -68,10 +72,11 @@ func main() {
 }
 
 type keyMap struct {
-	Fast key.Binding
-	Slow key.Binding
-	Help key.Binding
-	Quit key.Binding
+	Fast  key.Binding
+	Slow  key.Binding
+	Help  key.Binding
+	Quit  key.Binding
+	Reset key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -81,6 +86,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Fast, k.Slow},
+		{k.Reset},
 		{k.Help, k.Quit},
 	}
 }
@@ -195,6 +201,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ping.Stop()
 			// TODO: wait for final statistics?
 			return m, tea.Quit
+		case key.Matches(msg, m.keys.Reset):
+			m.recv = 0
+			m.mean = 0
+			m.dem2 = 0
 		default:
 			return m, printf(`unknown key: %v`, msg)
 		}
@@ -332,7 +342,7 @@ func (m model) View() string {
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
-	line = fmt.Sprintf(`via-lib: avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, avg, sd, sd1, sd2, sd3)
+	line = fmt.Sprintf(`via-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, stats.PacketsRecv, avg, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// perform non-pro-bing statistics
@@ -340,7 +350,7 @@ func (m model) View() string {
 	sd1 = sd*1 + m.mean
 	sd2 = sd*2 + m.mean
 	sd3 = sd*3 + m.mean
-	line = fmt.Sprintf(`non-lib: avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.mean, sd, sd1, sd2, sd3)
+	line = fmt.Sprintf(`non-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, m.mean, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// remove NaNs from the data
