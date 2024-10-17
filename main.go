@@ -93,6 +93,12 @@ type model struct {
 	data     []pingPoint     // stream of fired and potentially received packets
 	quitting bool            // TODO: rename `quit` (why not have all state be 4 chars long?)
 	w, h     int             // world size
+
+	// running statistics
+	// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
+	recv uint64  // number of packets received
+	mean float64 // average rtt (TODO: uint64 as nanoseconds to keep it integer arithmetic)
+	dem2 float64 // sum of squared differences from the mean (used to calculate standard deviation)
 }
 
 type pingPoint struct {
@@ -213,26 +219,57 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.w > 0 && len(m.data) > m.w {
 				m.data = m.data[len(m.data)-m.w:]
 			}
-			return m, printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
-		} else {
-			// TODO: use slices.BinarySearchFunc to find the right index
-			var found bool
-			// NOTE: going backwards as sequence values are re-used when rescaling the pinger
-			// This'll ensure previous values aren't updated, only the newest sequence value
-			// TODO: this is fragile AF! (but it works for now)
-			for i := len(m.data) - 1; i >= 0; i-- {
-				p := m.data[i]
-				if p.Seq == msg.Seq {
-					found = true
-					m.data[i].Rtt = dur2ms(msg.Rtt)
-					break
-				}
-			}
-			if !found {
-				return m, printf("recv: id: %d; seq: %d; not found", msg.ID, msg.Seq)
-			}
-			return m, printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
+			return m, nil //printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
 		}
+
+		// TODO: use slices.BinarySearchFunc to find the right index
+		myIndex := -1
+		// NOTE: going backwards as sequence values are re-used when rescaling the pinger
+		// This'll ensure previous values aren't updated, only the newest sequence value
+		// TODO: this is fragile AF! (but it works for now)
+		for i := len(m.data) - 1; i >= 0; i-- {
+			p := m.data[i]
+			if p.Seq == msg.Seq {
+				myIndex = i
+				break
+			}
+		}
+		if myIndex < 0 {
+			return m, printf("recv: id: %d; seq: %d; not found", msg.ID, msg.Seq)
+		}
+
+		// TODO: all this as integer arithmetic, not floating point
+		rtt := dur2ms(msg.Rtt)
+		m.data[myIndex].Rtt = rtt
+		m.recv++
+		// welford's online method for stddev
+		// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
+		pmean := m.mean
+		delta := rtt - m.mean
+		m.mean += delta / float64(m.recv)
+		delta2 := rtt - m.mean
+		m.dem2 += delta * delta2
+
+		calcRTT := m.ping.Statistics().StdDevRtt
+
+		if m.dem2/float64(m.recv) < 0 || calcRTT < 0 {
+			// 2024-10-15 21:31:35.055: count: 1145, pmean: 39.438ms, mean: 48.620ms, rtt: 10552.479ms, delta: 10513.041ms, delta2: 10503.859ms, m.dem2: 331884019.482ms
+			return m, tea.Sequence(
+				printf("recv: id: %d; seq: %d; negative stddev: %s", msg.ID, msg.Seq, calcRTT),
+				printf(
+					"count: %d, pmean: %.3fms, mean: %.3fms, rtt: %.3fms, delta: %.3fms, delta2: %.3fms, m.dem2: %.3fms",
+					m.recv,
+					pmean,
+					m.mean,
+					rtt,
+					delta,
+					delta2,
+					m.dem2,
+				),
+				// tea.Quit,
+			)
+		}
+		return m, nil // printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
 		return m, msg
@@ -245,6 +282,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 var allowedMessages = map[string]struct{}{
+	`tea.sequenceMsg`:       {},
 	`tea.printLineMessage`:  {},
 	`tea.setWindowTitleMsg`: {},
 }
@@ -294,7 +332,15 @@ func (m model) View() string {
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
-	line = fmt.Sprintf(`avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, avg, sd, sd1, sd2, sd3)
+	line = fmt.Sprintf(`via-lib: avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, avg, sd, sd1, sd2, sd3)
+	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
+
+	// perform non-pro-bing statistics
+	sd = math.Sqrt(m.dem2 / float64(m.recv))
+	sd1 = sd*1 + m.mean
+	sd2 = sd*2 + m.mean
+	sd3 = sd*3 + m.mean
+	line = fmt.Sprintf(`non-lib: avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.mean, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// remove NaNs from the data
