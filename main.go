@@ -102,13 +102,13 @@ type model struct {
 
 	// running statistics
 	// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
-	recv uint64  // number of packets received
-	mean float64 // average rtt (TODO: uint64 as nanoseconds to keep it integer arithmetic)
-	dem2 float64 // sum of squared differences from the mean (used to calculate standard deviation)
+	recv uint64        // number of packets received
+	mean time.Duration // average rtt
+	dem2 time.Duration // sum of squared differences from the mean (used to calculate standard deviation)
 }
 
 type pingPoint struct {
-	Rtt float64 // in ms
+	Rtt time.Duration
 	Seq int
 }
 
@@ -225,7 +225,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Width = msg.Width
 	case *probing.Packet:
 		if msg.Rtt == 0 {
-			m.data = append(m.data, pingPoint{Rtt: math.NaN(), Seq: msg.Seq})
+			m.data = append(m.data, pingPoint{Rtt: 0, Seq: msg.Seq})
 			if m.w > 0 && len(m.data) > m.w {
 				m.data = m.data[len(m.data)-m.w:]
 			}
@@ -248,21 +248,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, printf("recv: id: %d; seq: %d; not found", msg.ID, msg.Seq)
 		}
 
-		// TODO: all this as integer arithmetic, not floating point
-		rtt := dur2ms(msg.Rtt)
-		m.data[myIndex].Rtt = rtt
+		m.data[myIndex].Rtt = msg.Rtt
 		m.recv++
 		// welford's online method for stddev
 		// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
 		pmean := m.mean
-		delta := rtt - m.mean
-		m.mean += delta / float64(m.recv)
-		delta2 := rtt - m.mean
+		delta := msg.Rtt - m.mean
+		m.mean += delta / time.Duration(m.recv)
+		delta2 := msg.Rtt - m.mean
 		m.dem2 += delta * delta2
 
 		calcRTT := m.ping.Statistics().StdDevRtt
 
-		if m.dem2/float64(m.recv) < 0 || calcRTT < 0 {
+		if m.dem2/time.Duration(m.recv) < 0 || calcRTT < 0 {
 			// 2024-10-15 21:31:35.055: count: 1145, pmean: 39.438ms, mean: 48.620ms, rtt: 10552.479ms, delta: 10513.041ms, delta2: 10503.859ms, m.dem2: 331884019.482ms
 			return m, tea.Sequence(
 				printf("recv: id: %d; seq: %d; negative stddev: %s", msg.ID, msg.Seq, calcRTT),
@@ -271,7 +269,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.recv,
 					pmean,
 					m.mean,
-					rtt,
+					msg.Rtt,
 					delta,
 					delta2,
 					m.dem2,
@@ -315,7 +313,7 @@ func (m model) View() string {
 
 	head := lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
-	if len(m.data) < 1 || m.w == 0 {
+	if len(m.data) < 1 || m.w == 0 || m.recv == 0 {
 		return head
 	}
 
@@ -327,7 +325,11 @@ func (m model) View() string {
 
 	points := make([]float64, len(stream))
 	for i, d := range stream {
-		v := d.Rtt
+		if d.Rtt == 0 {
+			points[i] = math.NaN()
+			continue
+		}
+		v := dur2ms(d.Rtt)
 		// keep data in an interesting range (TODO: make this configurable + smarter)
 		points[i] = min(max(v, 0), 99.9)
 		if v != points[i] {
@@ -346,11 +348,13 @@ func (m model) View() string {
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// perform non-pro-bing statistics
-	sd = math.Sqrt(m.dem2 / float64(m.recv))
-	sd1 = sd*1 + m.mean
-	sd2 = sd*2 + m.mean
-	sd3 = sd*3 + m.mean
-	line = fmt.Sprintf(`non-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, m.mean, sd, sd1, sd2, sd3)
+	// TODO: keep this math as time.Duration once we don't care about comparing to ^^ (the pro-bing stats)
+	sd = dur2ms(time.Duration(math.Sqrt(float64(m.dem2 / time.Duration(m.recv)))))
+	avg = dur2ms(m.mean)
+	sd1 = sd*1 + avg
+	sd2 = sd*2 + avg
+	sd3 = sd*3 + avg
+	line = fmt.Sprintf(`non-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// remove NaNs from the data
