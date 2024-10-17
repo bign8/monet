@@ -357,18 +357,11 @@ func (m model) View() string {
 	line = fmt.Sprintf(`non-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
-	// remove NaNs from the data
-	nanLessPoints := make([]float64, 0, len(points))
-	for _, v := range points {
-		if !math.IsNaN(v) {
-			nanLessPoints = append(nanLessPoints, v)
-		}
-	}
+	// remove NaNs from the data (duplicate points slice as delete func modifies the slice)
+	nanLessPoints := slices.DeleteFunc(slices.Clone(points), math.IsNaN)
 	if len(nanLessPoints) == 0 {
 		return head + "\n" + m.help.View(m.keys)
 	}
-
-	// TODO: manually cap data to exist within a reasonable range
 
 	chart := asciigraph.PlotMany(
 		[][]float64{
