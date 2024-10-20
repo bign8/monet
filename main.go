@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -441,6 +442,8 @@ func (m model) View() string {
 		return head + "\n" + m.help.View(m.keys)
 	}
 
+	minimum := math.Floor(min(slices.Min(nanLessPoints), avg))
+	maximum := math.Ceil(max(slices.Max(nanLessPoints), sd3))
 	chart := asciigraph.PlotMany(
 		[][]float64{
 			slices.Repeat([]float64{avg}, maxPoints),
@@ -470,9 +473,62 @@ func (m model) View() string {
 
 		// prevent axis from changing rapidly
 		// TODO: ensure there are HEIGHT unique axis values (with 2 decimal places)
-		asciigraph.LowerBound(math.Floor(min(slices.Min(nanLessPoints), avg))),
-		asciigraph.UpperBound(math.Ceil(max(slices.Max(nanLessPoints), sd3))),
+		asciigraph.LowerBound(minimum),
+		asciigraph.UpperBound(maximum),
 	)
+
+	// histogram logic has a real bad day if interval is 0, which will require > 1 data point
+	if len(nanLessPoints) < 2 {
+		return head + "\n" + chart + "\n" + m.help.View(m.keys)
+	}
+
+	// create a really rough histogram given the current data's range
+	{
+		// maximum := max(slices.Max(nanLessPoints), sd3)
+		// minimum := min(slices.Min(nanLessPoints), avg)
+		interval := maximum - minimum
+		ratio := float64(20) / interval
+		min2 := math.Round(minimum * ratio) // not the same rounding algorithm as asciigraph
+
+		buckets := make([]int, 21)
+		for _, v := range nanLessPoints {
+			y := int(math.Round(v*ratio) - min2)
+			buckets[y]++
+		}
+
+		bucketMax := slices.Max(buckets)
+		const maxBucketHeight = 7 /* characters */ * 8 /* block character is divided into 8 parts */
+		if bucketMax > maxBucketHeight {
+			// scale down the bars
+			for i := range buckets {
+				buckets[i] = int(float64(buckets[i]) / float64(bucketMax) * maxBucketHeight)
+			}
+		}
+
+		histogram := make([]string, 21)
+
+		// block characters can be divided into 8 parts (going left to right; right to left characters have fallen out of favor)
+		blocks := []rune(`▉▊▋▌▍▎▏ `)
+		slices.Reverse(blocks)
+
+		for i := 0; i < 21; i++ {
+			if buckets[i] == maxBucketHeight {
+				histogram[i] = strings.Repeat(`█`, 7)
+				continue
+			}
+			tip := buckets[i] % 8
+			tail := buckets[i] / 8
+
+			histogram[i] = strings.Repeat(`█`, tail) + string(blocks[tip])
+		}
+		for i := 0; i < 21; i++ {
+			histogram[i] = fmt.Sprintf(` %-7s ├`, histogram[i])
+		}
+		slices.Reverse(histogram) // bottom is the smaller number
+
+		// prepend a histogram to the chart
+		chart = lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(histogram, "\n"), chart)
+	}
 
 	if m.warn > 0 {
 		color := lipgloss.Color(`#FFA500`)
@@ -491,31 +547,33 @@ func (m model) View() string {
 		head = warning + "\n" + head
 	}
 
-	maximum := slices.Max(nanLessPoints)
-	if maximum < 50 {
-		return head + "\n" + chart + "\n" + m.help.View(m.keys)
+	{
+		maximum := slices.Max(nanLessPoints)
+		if maximum < 50 {
+			return head + "\n" + chart + "\n" + m.help.View(m.keys)
+		}
+
+		color := lipgloss.Color(`#FF0000`)
+		message := `WARNING: high latency detected (>100ms)`
+		if maximum < 100 {
+			color = lipgloss.Color(`#FFA500`)
+			message = `WARNING: elevated latency detected (>50ms)`
+		}
+
+		var warning = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(color).
+			Foreground(color).
+			Bold(true).
+			Align(lipgloss.Center, lipgloss.Center).
+			Margin(1).
+			Width(m.w - 2 - 2). // 2 for border; 2 for margin
+			Height(3).
+			Blink(maximum >= 100).
+			Render(message)
+
+		return warning + "\n" + head + "\n" + chart + "\n" + m.help.View(m.keys)
 	}
-
-	color := lipgloss.Color(`#FF0000`)
-	message := `WARNING: high latency detected (>100ms)`
-	if maximum < 100 {
-		color = lipgloss.Color(`#FFA500`)
-		message = `WARNING: elevated latency detected (>50ms)`
-	}
-
-	var warning = lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(color).
-		Foreground(color).
-		Bold(true).
-		Align(lipgloss.Center, lipgloss.Center).
-		Margin(1).
-		Width(m.w - 2 - 2). // 2 for border; 2 for margin
-		Height(3).
-		Blink(maximum >= 100).
-		Render(message)
-
-	return warning + "\n" + head + "\n" + chart + "\n" + m.help.View(m.keys)
 }
 
 func dur2ms(d time.Duration) float64 {
