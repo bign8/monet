@@ -48,13 +48,25 @@ This way, I can keep my focus on my work and only be alerted if something is wro
 
 ### Ideas
 
-- [ ] Replace asciigraph with home rolled solution to be able to "XXX" out a column where we are expecting a response but didn't get one.
+- [i] Replace asciigraph with home rolled solution to be able to "XXX" out a column where we are expecting a response but didn't get one.
 - [x] Slow down to a "reasonable" rate once the screen is filled with data.
 - [x] Show a warning if we haven't seen a response or two in an expected time window.
 - [x] Use a different intervals to make more human sense: 50ms, 100ms 250ms 500ms 1s
 - [ ] Add a screen to search/choose from a known list of hosts to monitor.
-- [ ] Look into charm-bracelet's Tape library for testing + demo recording
+- [?] Look into charm-bracelet's Tape library for testing + demo recording
 - [ ] Look into not using a ping library to implement the ping functionality
-- [ ] Look into non-charm-bracelet UI library to reduce dependencies (low priority)
+- [i] Look into non-charm-bracelet UI library to reduce dependencies (low priority)
 - [x] Include a histogram of the ping times
 - [ ] Show p90, p95, p99, p995, p999, p9995 latencies
+- [ ] Keep a "window" for ~1000 pings and compute more "recent" statistics
+- [!] Fix negative standard deviation issue
+
+
+Key:
+
+- `[ ]` - Not Started
+- `[x]` - Done
+- `[~]` - In Progress
+- `[?]` - Not Sure
+- `[!]` - Problem
+- `[i]` - Icebox
