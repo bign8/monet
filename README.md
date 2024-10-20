@@ -56,3 +56,5 @@ This way, I can keep my focus on my work and only be alerted if something is wro
 - [ ] Look into charm-bracelet's Tape library for testing + demo recording
 - [ ] Look into not using a ping library to implement the ping functionality
 - [ ] Look into non-charm-bracelet UI library to reduce dependencies (low priority)
+- [ ] Include a histogram of the ping times
+- [ ] Show p90, p95, p99, p995, p999, p9995 latencies
