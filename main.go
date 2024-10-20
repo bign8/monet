@@ -64,8 +64,6 @@ func main() {
 		help: help.New(),
 		ping: probing.New(target),
 		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
-
-		speedX: -1, // Init signals this to start at 0
 	}
 
 	p := tea.NewProgram(m)
@@ -123,7 +121,7 @@ type pingPoint struct {
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		rescale(0),                        // start pinging
+		rescale(1),                        // start pinging
 		m.spin.Tick,                       // start spinner
 		tea.SetWindowTitle(`Checking...`), // get a fun window title going!
 	)
@@ -153,6 +151,7 @@ var intervals = []time.Duration{
 	// while the stackOverflow answer provides subtle math, this list seems easier to read
 	// https://stackoverflow.com/a/53760271
 	// for local services, it's fun to go faster, but... let's be nice to the internet
+	25 * time.Millisecond,
 	50 * time.Millisecond,
 	100 * time.Millisecond,
 	250 * time.Millisecond,
@@ -395,7 +394,7 @@ func (m model) View() string {
 	// 12345 = 5 characters
 	// [space][number][space][y-axis] - typically seeing 4 character numbers, making buffer 6
 	// y-axis itself counts as the 1st data-point (cause it's drawn with ┤ and ┼ characters)
-	const buffer = 3 /* precision */ + 1 /* padding */ + 2 /* axis */
+	const buffer = 3 /* precision */ + 1 /* padding */ + 2 /* axis */ + 10 /* histogram */
 	maxPoints := m.w - buffer
 
 	line := fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
