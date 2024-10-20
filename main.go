@@ -63,6 +63,8 @@ func main() {
 		help: help.New(),
 		ping: probing.New(target),
 		spin: spinner.New(spinner.WithSpinner(spinner.Dot)),
+
+		speedX: -1, // Init signals this to start at 0
 	}
 
 	p := tea.NewProgram(m)
@@ -100,6 +102,9 @@ type model struct {
 	quitting bool            // TODO: rename `quit` (why not have all state be 4 chars long?)
 	w, h     int             // world size
 
+	speedX  int  // index into `intervals` slice
+	changed bool // have we slowed down since starting (we start fast to fill the screen, but slow to a reasonable interval)
+
 	// running statistics
 	// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
 	recv uint64        // number of packets received
@@ -112,13 +117,9 @@ type pingPoint struct {
 	Seq int
 }
 
-type startCmd struct{}
-
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		func() tea.Msg {
-			return startCmd{}
-		},
+		rescale(0),                        // start pinging
 		m.spin.Tick,                       // start spinner
 		tea.SetWindowTitle(`Checking...`), // get a fun window title going!
 	)
@@ -132,6 +133,34 @@ type wrappedMsg struct {
 func printf(format string, args ...interface{}) tea.Cmd {
 	const timeFormat = `2006-01-02 15:04:05.000`
 	return tea.Printf(time.Now().Format(timeFormat)+`: `+format, args...)
+}
+
+// message to modify the interval of the pinger
+// value is an index into the intervals slice
+type rescaleMessage int
+
+func rescale(i int) tea.Cmd {
+	return func() tea.Msg {
+		return rescaleMessage(i)
+	}
+}
+
+var intervals = []time.Duration{
+	// while the stackOverflow answer provides subtle math, this list seems easier to read
+	// https://stackoverflow.com/a/53760271
+	// for local services, it's fun to go faster, but... let's be nice to the internet
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	// Let's be real, nobodies going above this!
+	// 2 * time.Second,
+	// 5 * time.Second,
+	// 10 * time.Second,
+	// 20 * time.Second,
+	// 30 * time.Second,
+	// time.Minute,
 }
 
 func (m *model) rescale(next time.Duration) tea.Cmd {
@@ -183,23 +212,26 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case startCmd:
-		cmd := m.rescale(50 * time.Millisecond)
-		return m, cmd
+	case rescaleMessage:
+		desired := min(max(int(msg), 0), len(intervals)-1)
+		if m.speedX != desired {
+			m.speedX = desired
+			return m, m.rescale(intervals[desired])
+		}
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Fast):
-			cmd := m.rescale(m.ping.Interval / 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
-			return m, cmd
+			m.changed = true
+			return m, rescale(m.speedX - 1)
 		case key.Matches(msg, m.keys.Slow):
-			cmd := m.rescale(m.ping.Interval * 2) // TODO: have this be a little more reasonable [100, 250, 500, 1000, 2000, 5000]
-			return m, cmd
+			m.changed = true
+			return m, rescale(m.speedX + 1)
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		case key.Matches(msg, m.keys.Quit):
 			m.quitting = true
 			m.ping.Stop()
-			// TODO: wait for final statistics?
+			// TODO: wait for a window for any outstanding pings
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Reset):
 			m.recv = 0
@@ -230,14 +262,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.data = m.data[len(m.data)-m.w:]
 
 				// once we fill the width... let's rescale to a more reasonable interval
-				if m.ping.Interval < 500*time.Millisecond {
-					return m, tea.Sequence(
-						func() tea.Msg {
-							time.Sleep(m.ping.Interval / 2)
-							return nil
-						},
-						m.rescale(500*time.Millisecond),
-					)
+				if !m.changed {
+					m.changed = true
+					return m, rescale(len(intervals) - 2) // not a snail, but not a rabbit
 				}
 			}
 			return m, nil //printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
@@ -269,12 +296,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delta2 := msg.Rtt - m.mean
 		m.dem2 += delta * delta2
 
-		calcRTT := m.ping.Statistics().StdDevRtt
-
-		if m.dem2/time.Duration(m.recv) < 0 || calcRTT < 0 {
+		experimentalStdDev := m.dem2 / time.Duration(m.recv)
+		if experimentalStdDev < 0 {
 			// 2024-10-15 21:31:35.055: count: 1145, pmean: 39.438ms, mean: 48.620ms, rtt: 10552.479ms, delta: 10513.041ms, delta2: 10503.859ms, m.dem2: 331884019.482ms
 			return m, tea.Sequence(
-				printf("recv: id: %d; seq: %d; negative stddev: %s", msg.ID, msg.Seq, calcRTT),
+				printf("recv: id: %d; seq: %d; negative stddev: %s", msg.ID, msg.Seq, experimentalStdDev),
 				printf(
 					"count: %d, pmean: %.3fms, mean: %.3fms, rtt: %.3fms, delta: %.3fms, delta2: %.3fms, m.dem2: %.3fms",
 					m.recv,
@@ -355,7 +381,7 @@ func (m model) View() string {
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
-	line = fmt.Sprintf(`non-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
+	line = fmt.Sprintf(`recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
 	// remove NaNs from the data (duplicate points slice as delete func modifies the slice)
