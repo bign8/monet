@@ -337,23 +337,13 @@ func (m model) View() string {
 		}
 	}
 
-	// gather + print some of those running statistics
-	stats := m.ping.Statistics()
-	avg := dur2ms(stats.AvgRtt)
-	sd := dur2ms(stats.StdDevRtt)
+	// perform non-pro-bing statistics
+	// TODO: keep this math as time.Duration once we don't care about comparing to ^^ (the pro-bing stats)
+	sd := dur2ms(time.Duration(math.Sqrt(float64(m.dem2 / time.Duration(m.recv)))))
+	avg := dur2ms(m.mean)
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
-	line = fmt.Sprintf(`via-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, stats.PacketsRecv, avg, sd, sd1, sd2, sd3)
-	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
-
-	// perform non-pro-bing statistics
-	// TODO: keep this math as time.Duration once we don't care about comparing to ^^ (the pro-bing stats)
-	sd = dur2ms(time.Duration(math.Sqrt(float64(m.dem2 / time.Duration(m.recv)))))
-	avg = dur2ms(m.mean)
-	sd1 = sd*1 + avg
-	sd2 = sd*2 + avg
-	sd3 = sd*3 + avg
 	line = fmt.Sprintf(`non-lib: recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
 	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 
