@@ -184,7 +184,7 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case startCmd:
-		cmd := m.rescale(100 * time.Millisecond)
+		cmd := m.rescale(50 * time.Millisecond)
 		return m, cmd
 	case tea.KeyMsg:
 		switch {
@@ -228,6 +228,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.data = append(m.data, pingPoint{Rtt: 0, Seq: msg.Seq})
 			if m.w > 0 && len(m.data) > m.w {
 				m.data = m.data[len(m.data)-m.w:]
+
+				// once we fill the width... let's rescale to a more reasonable interval
+				if m.ping.Interval < 500*time.Millisecond {
+					return m, tea.Sequence(
+						func() tea.Msg {
+							time.Sleep(m.ping.Interval / 2)
+							return nil
+						},
+						m.rescale(500*time.Millisecond),
+					)
+				}
 			}
 			return m, nil //printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
 		}
