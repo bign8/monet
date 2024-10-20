@@ -105,6 +105,8 @@ type model struct {
 	speedX  int  // index into `intervals` slice
 	changed bool // have we slowed down since starting (we start fast to fill the screen, but slow to a reasonable interval)
 
+	warn uint // high latency warning semaphore
+
 	// running statistics
 	// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
 	recv uint64        // number of packets received
@@ -114,6 +116,7 @@ type model struct {
 
 type pingPoint struct {
 	Rtt time.Duration
+	ID  int
 	Seq int
 }
 
@@ -210,6 +213,16 @@ func (m *model) rescale(next time.Duration) tea.Cmd {
 	)
 }
 
+// message to check the status of a specific ping, if we can't see it, sound the alarm!!!
+type howAreYaNow struct {
+	// this is currently complicated because during re-scales, the pinger changes IDs and re-uses sequence numbers
+	ID  int
+	Seq int
+}
+
+// message to clear the warning semaphore
+type goodAndYou struct{}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case rescaleMessage:
@@ -218,6 +231,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.speedX = desired
 			return m, m.rescale(intervals[desired])
 		}
+
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Fast):
@@ -229,7 +243,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		case key.Matches(msg, m.keys.Quit):
-			m.quitting = true
+			m.quitting = true // TODO: print final statistics on quitting
 			m.ping.Stop()
 			// TODO: wait for a window for any outstanding pings
 			return m, tea.Quit
@@ -240,6 +254,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m, printf(`unknown key: %v`, msg)
 		}
+
 	case wrappedMsg:
 		m, cmd := m.Update(msg.this)
 		return m, tea.Batch(cmd, func() tea.Msg {
@@ -248,16 +263,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				this: <-msg.more,
 			}
 		})
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
+
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.help.Width = msg.Width
+
 	case *probing.Packet:
 		if msg.Rtt == 0 {
-			m.data = append(m.data, pingPoint{Rtt: 0, Seq: msg.Seq})
+			m.data = append(m.data, pingPoint{
+				ID:  msg.ID,
+				Seq: msg.Seq,
+			})
 			if m.w > 0 && len(m.data) > m.w {
 				m.data = m.data[len(m.data)-m.w:]
 
@@ -267,7 +288,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, rescale(len(intervals) - 2) // not a snail, but not a rabbit
 				}
 			}
-			return m, nil //printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
+			// return m, printf("send: id: %d; seq: %d", msg.ID, msg.Seq)
+			return m, func() tea.Msg {
+				time.Sleep(time.Second)
+				return howAreYaNow{ID: msg.ID, Seq: msg.Seq}
+			}
 		}
 
 		// TODO: use slices.BinarySearchFunc to find the right index
@@ -315,9 +340,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 		return m, nil // printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
+
+	case howAreYaNow:
+		myPrecious := -1
+		for i, p := range m.data {
+			if p.ID == msg.ID && p.Seq == msg.Seq {
+				myPrecious = i
+				break
+			}
+		}
+		if myPrecious < 0 {
+			return m, printf("how-are-ya-now: id: %d; seq: %d; not found", msg.ID, msg.Seq)
+		}
+		if m.data[myPrecious].Rtt != 0 {
+			return m, nil // all good, we've received the packed
+		}
+
+		m.warn++
+		return m, func() tea.Msg {
+			time.Sleep(20 * time.Second)
+			return goodAndYou{}
+		}
+
+	case goodAndYou:
+		m.warn--
+
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
 		return m, msg
+
 	default:
 		if _, allowed := allowedMessages[fmt.Sprintf(`%T`, msg)]; !allowed {
 			return m, printf(`unhandled message: %T(%#v)`, msg, msg)
@@ -422,6 +473,23 @@ func (m model) View() string {
 		asciigraph.LowerBound(math.Floor(min(slices.Min(nanLessPoints), avg))),
 		asciigraph.UpperBound(math.Ceil(max(slices.Max(nanLessPoints), sd3))),
 	)
+
+	if m.warn > 0 {
+		color := lipgloss.Color(`#FFA500`)
+
+		var warning = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(color).
+			Foreground(color).
+			Bold(true).
+			Align(lipgloss.Center, lipgloss.Center).
+			Margin(1).
+			Width(m.w - 2 - 2). // 2 for border; 2 for margin
+			Height(3).
+			Render(`PINGS EXCEEDING 1s`)
+
+		head = warning + "\n" + head
+	}
 
 	maximum := slices.Max(nanLessPoints)
 	if maximum < 50 {
