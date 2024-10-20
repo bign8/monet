@@ -60,6 +60,10 @@ func main() {
 				key.WithKeys(`r`),
 				key.WithHelp(`r`, `Reset Stats`),
 			),
+			Debug: key.NewBinding(
+				key.WithKeys(`d`),
+				key.WithHelp(`d`, `Toggle Debug`),
+			),
 		},
 		help: help.New(),
 		ping: probing.New(target),
@@ -78,6 +82,7 @@ type keyMap struct {
 	Help  key.Binding
 	Quit  key.Binding
 	Reset key.Binding
+	Debug key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -87,7 +92,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Fast, k.Slow},
-		{k.Reset},
+		{k.Reset, k.Debug},
 		{k.Help, k.Quit},
 	}
 }
@@ -104,7 +109,8 @@ type model struct {
 	speedX  int  // index into `intervals` slice
 	changed bool // have we slowed down since starting (we start fast to fill the screen, but slow to a reasonable interval)
 
-	warn uint // high latency warning semaphore
+	warn  uint // high latency warning semaphore
+	debug bool
 
 	// running statistics
 	// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
@@ -251,6 +257,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recv = 0
 			m.mean = 0
 			m.dem2 = 0
+		case key.Matches(msg, m.keys.Debug):
+			m.debug = !m.debug
 		default:
 			return m, printf(`unknown key: %v`, msg)
 		}
@@ -397,9 +405,11 @@ func (m model) View() string {
 	const buffer = 3 /* precision */ + 1 /* padding */ + 2 /* axis */ + 10 /* histogram */
 	maxPoints := m.w - buffer
 
-	line := fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
-
-	head := lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
+	var head string
+	if m.debug {
+		line := fmt.Sprintf(`width: %d, buffer: %d, maxPoints: %d`, m.w, buffer, maxPoints)
+		head = lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
+	}
 
 	if len(m.data) < 1 || m.w == 0 || m.recv == 0 {
 		return head
@@ -432,8 +442,10 @@ func (m model) View() string {
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
-	line = fmt.Sprintf(`recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
-	head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
+	if m.debug {
+		line := fmt.Sprintf(`recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
+		head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
+	}
 
 	// remove NaNs from the data (duplicate points slice as delete func modifies the slice)
 	nanLessPoints := slices.DeleteFunc(slices.Clone(points), math.IsNaN)
@@ -524,6 +536,9 @@ func (m model) View() string {
 			histogram[i] = fmt.Sprintf(` %-7s ├`, histogram[i])
 		}
 		slices.Reverse(histogram) // bottom is the smaller number
+
+		// add total to bottom of histogram
+		histogram = append(histogram, ``, fmt.Sprintf(` %8d `, m.recv))
 
 		// prepend a histogram to the chart
 		chart = lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(histogram, "\n"), chart)
