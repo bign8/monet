@@ -283,13 +283,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Debug):
 			m.debug = !m.debug
 		case key.Matches(msg, m.keys.Warn):
-			m.warn++
+			for i := range m.data {
+				m.data[i].Rtt += 50 * time.Millisecond
+			}
 		case key.Matches(msg, m.keys.Fail):
-			m.warn += 1000
+			if m.warn == 0 {
+				m.warn++
+			}
 		case key.Matches(msg, m.keys.ClearWarn):
-			m.warn--
+			for i := range m.data {
+				m.data[i].Rtt -= 50 * time.Millisecond
+			}
 		case key.Matches(msg, m.keys.ClearFail):
-			m.warn -= 1000
+			if m.warn > 0 {
+				m.warn--
+			}
 		default:
 			return m, printf(`unknown key: %v`, msg)
 		}
@@ -433,7 +441,7 @@ func (m model) View() string {
 	// 12345 = 5 characters
 	// [space][number][space][y-axis] - typically seeing 4 character numbers, making buffer 6
 	// y-axis itself counts as the 1st data-point (cause it's drawn with ┤ and ┼ characters)
-	const buffer = 3 /* precision */ + 1 /* padding */ + 2 /* axis */ + 10 /* histogram */
+	const buffer = 3 /* precision */ + 1 /* padding */ + 2 /* axis */ + 10 /* histogram */ + 2 /* border */
 	maxPoints := m.w - buffer
 
 	var head string
@@ -575,50 +583,45 @@ func (m model) View() string {
 		chart = lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(histogram, "\n"), chart)
 	}
 
-	if m.warn > 0 {
-		color := lipgloss.Color(`#FFA500`)
+	screen := head + "\n" + chart + "\n" + m.help.View(m.keys) // TODO: join vertical
 
-		var warning = lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(color).
-			Foreground(color).
-			Bold(true).
-			Align(lipgloss.Center, lipgloss.Center).
-			Margin(1).
-			Width(m.w - 2 - 2). // 2 for border; 2 for margin
-			Height(3).
-			Render(`PINGS EXCEEDING 1s`)
-
-		head = warning + "\n" + head
-	}
+	var frame = lipgloss.NewStyle().
+		Border(lipgloss.HiddenBorder()).
+		Align(lipgloss.Center, lipgloss.Center).
+		Width(m.w - 2)
 
 	{
 		maximum := slices.Max(nanLessPoints)
-		if maximum < 50 {
-			return head + "\n" + chart + "\n" + m.help.View(m.keys)
+		if maximum > 100 {
+			color := lipgloss.Color(`#FF0000`)
+			frame = frame.BorderForeground(color).
+				Foreground(color).
+				Border(lipgloss.DoubleBorder())
+			line := "PINGS EXCEEDING 100ms" // TODO: colorize
+			line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
+			screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
+		} else if maximum > 50 {
+			color := lipgloss.Color(`#FFA500`)
+			frame = frame.BorderForeground(color).
+				Foreground(color).
+				Border(lipgloss.DoubleBorder())
+			line := "PINGS EXCEEDING 50ms" // TODO: colorize
+			line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
+			screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 		}
-
-		color := lipgloss.Color(`#FF0000`)
-		message := `WARNING: high latency detected (>100ms)`
-		if maximum < 100 {
-			color = lipgloss.Color(`#FFA500`)
-			message = `WARNING: elevated latency detected (>50ms)`
-		}
-
-		var warning = lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(color).
-			Foreground(color).
-			Bold(true).
-			Align(lipgloss.Center, lipgloss.Center).
-			Margin(1).
-			Width(m.w - 2 - 2). // 2 for border; 2 for margin
-			Height(3).
-			Blink(maximum >= 100).
-			Render(message)
-
-		return warning + "\n" + head + "\n" + chart + "\n" + m.help.View(m.keys)
 	}
+
+	if m.warn > 0 {
+		color := lipgloss.Color(`#FF0000`)
+		frame = frame.BorderForeground(color).
+			Foreground(color).
+			Border(lipgloss.DoubleBorder())
+		line := "PINGS EXCEEDING 1s" // TODO: colorize
+		line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
+		screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
+	}
+
+	return frame.Render(screen)
 }
 
 func dur2ms(d time.Duration) float64 {
