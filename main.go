@@ -64,6 +64,22 @@ func main() {
 				key.WithKeys(`d`),
 				key.WithHelp(`d`, `Toggle Debug`),
 			),
+			Warn: key.NewBinding(
+				key.WithKeys(`w`),
+				key.WithHelp(`w`, `Toggle Warning`),
+			),
+			Fail: key.NewBinding(
+				key.WithKeys(`e`),
+				key.WithHelp(`e`, `Toggle Error`),
+			),
+			ClearWarn: key.NewBinding(
+				key.WithKeys(`W`),
+				key.WithHelp(`W`, `Clear Warning`),
+			),
+			ClearFail: key.NewBinding(
+				key.WithKeys(`E`),
+				key.WithHelp(`E`, `Clear Error`),
+			),
 		},
 		help: help.New(),
 		ping: probing.New(target),
@@ -83,6 +99,11 @@ type keyMap struct {
 	Quit  key.Binding
 	Reset key.Binding
 	Debug key.Binding
+
+	Warn      key.Binding
+	Fail      key.Binding
+	ClearWarn key.Binding
+	ClearFail key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -94,6 +115,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Fast, k.Slow},
 		{k.Reset, k.Debug},
 		{k.Help, k.Quit},
+		{k.Warn, k.ClearWarn},
+		{k.Fail, k.ClearFail},
 	}
 }
 
@@ -259,6 +282,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dem2 = 0
 		case key.Matches(msg, m.keys.Debug):
 			m.debug = !m.debug
+		case key.Matches(msg, m.keys.Warn):
+			m.warn++
+		case key.Matches(msg, m.keys.Fail):
+			m.warn += 1000
+		case key.Matches(msg, m.keys.ClearWarn):
+			m.warn--
+		case key.Matches(msg, m.keys.ClearFail):
+			m.warn -= 1000
 		default:
 			return m, printf(`unknown key: %v`, msg)
 		}
