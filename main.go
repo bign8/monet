@@ -468,7 +468,7 @@ func (m model) View() string {
 		}
 		v := dur2ms(d.Rtt)
 		// keep data in an interesting range (TODO: make this configurable + smarter)
-		points[i] = min(max(v, 0), 99.9)
+		points[i] = min(max(v, 0), 95)
 		if v != points[i] {
 			// TODO: signify truncated value
 		}
@@ -494,6 +494,7 @@ func (m model) View() string {
 
 	minimum := math.Floor(min(slices.Min(nanLessPoints), avg))
 	maximum := math.Ceil(max(slices.Max(nanLessPoints), sd3))
+	// TODO: really figure out the y-axis labels.  Currently, their width can change based on the data: 0.0, 10.0, 100.0 (all have different column widths)
 	chart := asciigraph.PlotMany(
 		[][]float64{
 			slices.Repeat([]float64{avg}, maxPoints),
@@ -579,6 +580,14 @@ func (m model) View() string {
 		// add total to bottom of histogram
 		histogram = append(histogram, ``, fmt.Sprintf(` %8d `, m.recv))
 
+		// sanity check
+		if len(histogram) != 23 {
+			panic(fmt.Sprintf(`bad histogram: %d`, len(histogram)))
+		}
+		if strings.Count(chart, "\n") != 23 {
+			panic(fmt.Sprintf(`bad chart: %d`, strings.Count(chart, "\n")))
+		}
+
 		// prepend a histogram to the chart
 		chart = lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(histogram, "\n"), chart)
 	}
@@ -587,42 +596,41 @@ func (m model) View() string {
 
 	var frame = lipgloss.NewStyle().
 		Border(lipgloss.HiddenBorder()).
-		Align(lipgloss.Center, lipgloss.Center).
+		Align(lipgloss.Left, lipgloss.Center).
 		Width(m.w - 2)
 
 	{
 		maximum := slices.Max(nanLessPoints)
-		if maximum > 100 {
-			color := lipgloss.Color(`#FF0000`)
-			frame = frame.BorderForeground(color).
-				Foreground(color).
+		if maximum > 90 {
+			frame = frame.BorderForeground(RED).
+				Foreground(RED).
 				Border(lipgloss.DoubleBorder())
-			line := "PINGS EXCEEDING 100ms" // TODO: colorize
-			line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
-			screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
+			// line := "PINGS EXCEEDING 100ms" // TODO: colorize
+			// line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
+			// screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 		} else if maximum > 50 {
-			color := lipgloss.Color(`#FFA500`)
-			frame = frame.BorderForeground(color).
-				Foreground(color).
+			frame = frame.BorderForeground(YELLOW).
+				Foreground(YELLOW).
 				Border(lipgloss.DoubleBorder())
-			line := "PINGS EXCEEDING 50ms" // TODO: colorize
-			line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
-			screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
+			// line := "PINGS EXCEEDING 50ms" // TODO: colorize
+			// line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
+			// screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 		}
 	}
 
 	if m.warn > 0 {
-		color := lipgloss.Color(`#FF0000`)
-		frame = frame.BorderForeground(color).
-			Foreground(color).
+		frame = frame.BorderForeground(RED).
 			Border(lipgloss.DoubleBorder())
-		line := "PINGS EXCEEDING 1s" // TODO: colorize
-		line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
-		screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
+		// line := "PINGS EXCEEDING 1s" // TODO: colorize
+		// line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
+		// screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 	}
 
 	return frame.Render(screen)
 }
+
+const RED = lipgloss.Color(`#FF0000`)
+const YELLOW = lipgloss.Color(`#FFA500`)
 
 func dur2ms(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000
