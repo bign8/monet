@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.1.1
 	github.com/charmbracelet/lipgloss v0.13.0
-	github.com/guptarohit/asciigraph v0.7.2
+	github.com/guptarohit/asciigraph v0.7.3
 	github.com/prometheus-community/pro-bing v0.4.1
 )
 
