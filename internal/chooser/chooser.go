@@ -8,8 +8,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	probing "github.com/prometheus-community/pro-bing"
 )
 
 //go:embed providers.json
@@ -56,20 +58,60 @@ type Chooser struct {
 	quitting bool
 }
 
-type letsGo struct{}
+type pleasePing int
 
 func (m *Chooser) Init() tea.Cmd {
-	return func() tea.Msg {
-		return letsGo{}
-	}
+	return tea.Batch(
+		func() tea.Msg {
+			return pleasePing(0)
+		},
+		func() tea.Msg {
+			return pleasePing(len(m.table) / 3)
+		},
+		func() tea.Msg {
+			return pleasePing(len(m.table) / 3 * 2)
+		},
+	)
+}
+
+type pingResult struct {
+	index int
+	err   error
+	stats *probing.Statistics
 }
 
 func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case letsGo:
-		// pick some number of pingers to start (3?)
-		// start their work queues and ping away
-		return m, tea.Printf(`what would you like to do? (q to quit) %d`, len(m.table))
+	case pleasePing:
+		if m.table[msg][2] != "pending" {
+			return m, nil
+		}
+		m.table[msg][2] = "pinging..."
+		pinger := probing.New(m.table[msg][1])
+		pinger.Count = 3
+		pinger.Timeout = time.Second * 4
+		return m, func() tea.Msg {
+			err := pinger.Run()
+			return pingResult{
+				index: int(msg),
+				err:   err,
+				stats: pinger.Statistics(),
+			}
+		}
+	case pingResult:
+		if msg.err != nil {
+			m.table[msg.index][2] = msg.err.Error()
+		} else {
+			m.table[msg.index][2] = msg.stats.AvgRtt.String()
+		}
+		msg.index++
+		if msg.index < len(m.table) {
+			return m, func() tea.Msg {
+				return pleasePing(msg.index)
+			}
+		}
+	case tea.Cmd:
+		return m, msg // allows please ping to send tea.Printf messages
 	case tea.KeyMsg:
 		if msg.String() == "q" {
 			m.quitting = true
