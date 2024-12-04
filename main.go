@@ -97,7 +97,7 @@ type keyMap struct {
 	Slow  key.Binding
 	Help  key.Binding
 	Quit  key.Binding
-	Reset key.Binding
+	Reset key.Binding // TODO: remove (does nothing)
 	Debug key.Binding
 
 	Warn      key.Binding
@@ -134,12 +134,6 @@ type model struct {
 
 	warn  uint // high latency warning semaphore
 	debug bool
-
-	// running statistics
-	// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
-	recv uint64        // number of packets received
-	mean time.Duration // average rtt
-	dem2 time.Duration // sum of squared differences from the mean (used to calculate standard deviation)
 }
 
 type pingPoint struct {
@@ -277,9 +271,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// TODO: wait for a window for any outstanding pings
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Reset):
-			m.recv = 0
-			m.mean = 0
-			m.dem2 = 0
+			// TODO: remove me
 		case key.Matches(msg, m.keys.Debug):
 			m.debug = !m.debug
 		case key.Matches(msg, m.keys.Warn):
@@ -359,71 +351,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.data[myIndex].Rtt = msg.Rtt
-		m.recv++
-		// welford's online method for stddev
-		// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
-		pmean := m.mean
-		pdem2 := m.dem2
-		delta := msg.Rtt - m.mean
-		m.mean += delta / time.Duration(m.recv)
-		delta2 := msg.Rtt - m.mean
-		m.dem2 += delta * delta2 // the multiplication overflows OR the addition overflows dem2
-
-		experimentalStdDev := m.dem2 / time.Duration(m.recv)
-		if experimentalStdDev < 0 {
-			// 2024-10-15 21:31:35.055: count: 1145, pmean: 39.438ms, mean: 48.620ms, rtt: 10552.479ms, delta: 10513.041ms, delta2: 10503.859ms, m.dem2: 331884019.482ms
-			// 2024-11-20 13:56:24.508: recv: id: 32270; seq: 2859; negative stddev: -236h41m11.12232049s
-			// 2024-11-20 13:56:24.508: count: 2977, pmean: %!f(time.Duration=27568319)ms, mean: %!f(time.Duration=30009172)ms, rtt: %!f(time.Duration=7293988133)ms, delta: %!f(time.Duration=7266419814)ms, delta2: %!f(time.Duration=7263978961)ms, m.dem2: %!f(time.Duration=-2536615731148100731)ms, multiple: %!f(time.Duration=-2557111570439121594)
-
-			// 2024-11-20 12:02:54.938: recv: id: 33783; seq: 19161; negative stddev: -114h18m23.202593411s
-			// 2024-11-20 12:02:54.939: count: 19278, pmean: %!f(time.Duration=23947758)ms, mean: %!f(time.Duration=24051554)ms, rtt:%!f(time.Duration=2024930990)ms, delta: %!f(time.Duration=2000983232)ms, delta2: %!f(time.Duration=2000879436)ms, m.dem2: %!f(time.Duration=-7932958739595787707)ms, multiple: %!f(time.Duration=4003726200689617152)
-
-			// 2024-11-20 13:56:24.508: recv: id: 32270; seq: 2859; negative stddev: -236h41m11.12232049s
-			// 2024-11-20 13:56:24.508: count: 2977, pmean: %!f(time.Duration=27568319)ms, mean: %!f(time.Duration=30009172)ms, rtt: %!f(time.Duration=7293988133)ms, delta: %!f(time.Duration=7266419814)ms, delta2: %!f(time.Duration=7263978961)ms, m.dem2: %!f(time.Duration=-2536615731148100731)ms, multiple: %!f(time.Duration=-2557111570439121594)
-
-			// 2nd example there
-			// delta := int64(7266419814) ; delta2 := int64(7263978961) ; delta * delta2 < 0
-			// https://stackoverflow.com/a/50744801
-			// 7s * 7s overflows int64
-			// time.Duration(math.Sqrt(float64(math.MaxInt64))) => 3s (rough max delta's in mean before stdev overflows while tracking in nanoseconds)
-			// durations that are 3s away from the mean (common in highly fluctuating data) will overflow int64 when building up the square sum
-			// time.Duration(math.Sqrt(float64(math.MaxInt64) * 1000))
-			// swapping to microseconds gets us to 1m35s away from delta before overflow
-			// time.Duration(math.Sqrt(float64(math.MaxInt64) * 1000 * 100))
-			// swapping to 0.1 milliseconds gets us 16m in delta before overflow
-			// TODO: instead of keeping track of things in terms of duration (nano-seconds), keep track of things in terms of 1/10th of a milliseconds OR microseconds as >1m is a bit much
-
-			// 2024-12-02 16:45:57.232: recv: id: 6324; seq: 51964; negative stddev: -40h57m24.036349393s
-			// 2024-12-02 16:45:57.232: failing metrics (overflow anyone?)
-			// count:                          52078
-			// pmean:                      21384295ns
-			// mean:                       21739699ns,
-			// rtt:                    18530125927ns
-			// delta:                   18508741632ns,
-			// delta2:                  18508386228ns,
-			// pdem2:             242608156158713803ns,
-			// m.dem2:           -7678590525003722805ns,
-			// multiple:           -7921198681162436608ns
-
-			// hey dummy, why not keep a circular buffer of the last 1000 packets and calculate stddev from that?
-
-			return m, tea.Sequence(
-				printf("recv: id: %d; seq: %d; negative stddev: %s", msg.ID, msg.Seq, experimentalStdDev),
-				printf(
-					"failing metrics (overflow anyone?)\ncount: %30d\npmean:%30dns\nmean: %30dns,\n  rtt: %30dns\ndelta:%30dns,\ndelta2:%30dns,\n pdem2: %30dns,\nm.dem2: %30dns,\nmultiple: %30dns",
-					m.recv,
-					pmean,
-					m.mean,
-					msg.Rtt,
-					delta,
-					delta2,
-					pdem2, // overflowed delta * delta2 !
-					m.dem2,
-					delta*delta2,
-				),
-				tea.Quit, // trying to figure out why we're getting negative standard deviations
-			)
-		}
 		return m, nil // printf("recv: id: %d; seq: %d", msg.ID, msg.Seq)
 
 	case howAreYaNow:
@@ -488,7 +415,7 @@ func (m model) View() string {
 		head = lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 	}
 
-	if len(m.data) < 1 || m.w == 0 || m.recv == 0 {
+	if len(m.data) < 1 || m.w == 0 {
 		return head
 	}
 
@@ -519,11 +446,12 @@ func (m model) View() string {
 	stats := m.ping.Statistics()
 	sd := dur2ms(stats.StdDevRtt)
 	avg := dur2ms(stats.AvgRtt)
+	recv := stats.PacketsRecv
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
 	if m.debug {
-		line := fmt.Sprintf(`recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, m.recv, avg, sd, sd1, sd2, sd3)
+		line := fmt.Sprintf(`recv: %6d, avg: %.3fms, sd: %.3fms, 1sd: %.3fms, 2sd: %.3fms, 3sd: %.3fms`, recv, avg, sd, sd1, sd2, sd3)
 		head += "\n" + lipgloss.Place(m.w, 1, lipgloss.Center, lipgloss.Center, line)
 	}
 
@@ -619,7 +547,7 @@ func (m model) View() string {
 		slices.Reverse(histogram) // bottom is the smaller number
 
 		// add total to bottom of histogram
-		histogram = append(histogram, ``, fmt.Sprintf(` %8d `, m.recv))
+		histogram = append(histogram, ``, fmt.Sprintf(` %8d `, recv))
 
 		// sanity check
 		if len(histogram) != 23 {
