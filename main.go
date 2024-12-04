@@ -28,8 +28,6 @@ func chk(name string, err error) {
 }
 
 func main() {
-	// TODO: start pinging some well known IPs 1.0.0.1, 1.1.1.1
-
 	target := `2606:4700:4700::1111`
 	if len(os.Args) > 1 {
 		target = os.Args[1]
@@ -42,11 +40,11 @@ func main() {
 		keys: keyMap{
 			Fast: key.NewBinding(
 				key.WithKeys(`f`),
-				key.WithHelp(`f`, `Fast mode`),
+				key.WithHelp(`f`, `Faster`),
 			),
 			Slow: key.NewBinding(
 				key.WithKeys(`s`),
-				key.WithHelp(`s`, `Slow mode`),
+				key.WithHelp(`s`, `Slower`),
 			),
 			Help: key.NewBinding(
 				key.WithKeys(`?`),
@@ -55,10 +53,6 @@ func main() {
 			Quit: key.NewBinding(
 				key.WithKeys(`q`, `esc`, `ctrl+c`),
 				key.WithHelp(`q`, `quit`),
-			),
-			Reset: key.NewBinding(
-				key.WithKeys(`r`),
-				key.WithHelp(`r`, `Reset Stats`),
 			),
 			Debug: key.NewBinding(
 				key.WithKeys(`d`),
@@ -97,7 +91,6 @@ type keyMap struct {
 	Slow  key.Binding
 	Help  key.Binding
 	Quit  key.Binding
-	Reset key.Binding // TODO: remove (does nothing)
 	Debug key.Binding
 
 	Warn      key.Binding
@@ -113,7 +106,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Fast, k.Slow},
-		{k.Reset, k.Debug},
+		{k.Debug},
 		{k.Help, k.Quit},
 		{k.Warn, k.ClearWarn},
 		{k.Fail, k.ClearFail},
@@ -270,8 +263,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ping.Stop()
 			// TODO: wait for a window for any outstanding pings
 			return m, tea.Quit
-		case key.Matches(msg, m.keys.Reset):
-			// TODO: remove me
 		case key.Matches(msg, m.keys.Debug):
 			m.debug = !m.debug
 		case key.Matches(msg, m.keys.Warn):
@@ -504,8 +495,6 @@ func (m model) View() string {
 
 	// create a really rough histogram given the current data's range
 	{
-		// maximum := max(slices.Max(nanLessPoints), sd3)
-		// minimum := min(slices.Min(nanLessPoints), avg)
 		interval := maximum - minimum
 		ratio := float64(20) / interval
 		min2 := math.Round(minimum * ratio) // not the same rounding algorithm as asciigraph
@@ -574,25 +563,16 @@ func (m model) View() string {
 			frame = frame.BorderForeground(RED).
 				Foreground(RED).
 				Border(lipgloss.DoubleBorder())
-			// line := "PINGS EXCEEDING 100ms" // TODO: colorize
-			// line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
-			// screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 		} else if maximum > 50 {
 			frame = frame.BorderForeground(YELLOW).
 				Foreground(YELLOW).
 				Border(lipgloss.DoubleBorder())
-			// line := "PINGS EXCEEDING 50ms" // TODO: colorize
-			// line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
-			// screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 		}
 	}
 
 	if m.warn > 0 {
 		frame = frame.BorderForeground(RED).
 			Border(lipgloss.DoubleBorder())
-		// line := "PINGS EXCEEDING 1s" // TODO: colorize
-		// line = lipgloss.Place(m.w-2, 1, lipgloss.Center, lipgloss.Center, line)
-		// screen = lipgloss.JoinVertical(lipgloss.Top, line, screen)
 	}
 
 	return frame.Render(screen)
