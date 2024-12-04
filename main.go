@@ -512,10 +512,13 @@ func (m model) View() string {
 		}
 	}
 
-	// perform non-pro-bing statistics
-	// TODO: keep this math as time.Duration once we don't care about comparing to ^^ (the pro-bing stats)
-	sd := dur2ms(time.Duration(math.Sqrt(float64(m.dem2 / time.Duration(m.recv)))))
-	avg := dur2ms(m.mean)
+	// // perform non-pro-bing statistics
+	// // TODO: keep this math as time.Duration once we don't care about comparing to ^^ (the pro-bing stats)
+	// sd := dur2ms(time.Duration(math.Sqrt(float64(m.dem2 / time.Duration(m.recv)))))
+	// avg := dur2ms(m.mean)
+	stats := m.ping.Statistics()
+	sd := dur2ms(stats.StdDevRtt)
+	avg := dur2ms(stats.AvgRtt)
 	sd1 := sd*1 + avg
 	sd2 := sd*2 + avg
 	sd3 := sd*3 + avg
