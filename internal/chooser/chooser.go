@@ -85,7 +85,8 @@ type pingResult struct {
 func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pleasePing:
-		if m.table[msg][2] != "pending" {
+		if int(msg) >= len(m.table) || m.table[msg][2] != "pending" {
+			m.workers--
 			return m, nil
 		}
 		m.table[msg][2] = "pinging..."
@@ -108,10 +109,8 @@ func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.table[msg.index][2] = msg.stats.AvgRtt.Round(time.Microsecond).String()
 		}
 		msg.index++
-		if msg.index < len(m.table) {
-			return m, func() tea.Msg {
-				return pleasePing(msg.index)
-			}
+		return m, func() tea.Msg {
+			return pleasePing(msg.index)
 		}
 	case tea.Cmd:
 		return m, msg // allows please ping to send tea.Printf messages
@@ -140,6 +139,11 @@ func (m *Chooser) View() string {
 		write(row[0], row[1], row[2])
 	}
 	write(`-----`, `--`, `------`)
+	buff.WriteRune('\n')
+	if m.workers != 0 {
+		buff.WriteString(fmt.Sprintf("Working: %d\n", m.workers))
+	}
+	buff.WriteString("Press 'q' to quit\n")
 	return buff.String()
 }
 
