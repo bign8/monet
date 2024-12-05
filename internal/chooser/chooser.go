@@ -44,8 +44,8 @@ func New() *Chooser {
 
 	return &Chooser{
 		table:    table,
-		owners:   owners,
 		template: fmt.Sprintf("%%%ds : %%-%ds : %%s\n", ownerPad, ipPad),
+		workers:  10,
 	}
 }
 
@@ -53,25 +53,27 @@ var _ tea.Model = (*Chooser)(nil)
 
 type Chooser struct {
 	table    [][3]string
-	owners   []string
 	template string
+	workers  int
 	quitting bool
 }
 
 type pleasePing int
 
 func (m *Chooser) Init() tea.Cmd {
-	return tea.Batch(
-		func() tea.Msg {
-			return pleasePing(0)
-		},
-		func() tea.Msg {
-			return pleasePing(len(m.table) / 3)
-		},
-		func() tea.Msg {
-			return pleasePing(len(m.table) / 3 * 2)
-		},
-	)
+
+	// the integer equivalent of math.Ceil(len(m.table) / m.workers)
+	// rounding up so the last worker doesn't get over worked by the remainder
+	n := len(m.table) + m.workers - 1
+	n /= m.workers
+
+	batch := make([]tea.Cmd, m.workers)
+	for i := range m.workers {
+		batch[i] = func() tea.Msg {
+			return pleasePing(n * i)
+		}
+	}
+	return tea.Batch(batch...)
 }
 
 type pingResult struct {
@@ -89,7 +91,8 @@ func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table[msg][2] = "pinging..."
 		pinger := probing.New(m.table[msg][1])
 		pinger.Count = 3
-		pinger.Timeout = time.Second * 4
+		pinger.Interval = time.Millisecond * 50
+		pinger.Timeout = time.Second
 		return m, func() tea.Msg {
 			err := pinger.Run()
 			return pingResult{
@@ -102,7 +105,7 @@ func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.table[msg.index][2] = msg.err.Error()
 		} else {
-			m.table[msg.index][2] = msg.stats.AvgRtt.String()
+			m.table[msg.index][2] = msg.stats.AvgRtt.Round(time.Microsecond).String()
 		}
 		msg.index++
 		if msg.index < len(m.table) {
