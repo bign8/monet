@@ -35,16 +35,23 @@ func New() *Chooser {
 	}
 	ipPad := maxLength(allIPs)
 
-	table := make([][3]string, 0, len(allIPs))
+	table := make([]row, 0, len(allIPs))
 	for _, owner := range owners {
 		for _, ip := range providers[owner] {
-			table = append(table, [3]string{owner, ip, "pending"})
+			table = append(table, row{
+				owner:    owner,
+				ip:       ip,
+				status:   "pending",
+				duration: time.Hour,
+			})
 		}
 	}
 
 	return &Chooser{
 		table:    table,
-		template: fmt.Sprintf("%%%ds : %%-%ds : %%s\n", ownerPad, ipPad),
+		template: fmt.Sprintf("| %%%ds | %%-%ds | %%9s |\n", ownerPad, ipPad), // len(xxx.xxxms) = 9
+		ownerPad: ownerPad,
+		ipPad:    ipPad,
 		workers:  10,
 	}
 }
@@ -52,10 +59,18 @@ func New() *Chooser {
 var _ tea.Model = (*Chooser)(nil)
 
 type Chooser struct {
-	table    [][3]string
+	table    []row
 	template string
+	ownerPad int
+	ipPad    int
 	workers  int
 	quitting bool
+}
+
+type row struct {
+	owner, ip string
+	status    string
+	duration  time.Duration
 }
 
 type pleasePing int
@@ -85,12 +100,17 @@ type pingResult struct {
 func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pleasePing:
-		if int(msg) >= len(m.table) || m.table[msg][2] != "pending" {
+		if int(msg) >= len(m.table) || m.table[msg].status != "pending" {
 			m.workers--
+			if m.workers == 0 {
+				sort.Slice(m.table, func(i, j int) bool {
+					return m.table[i].duration < m.table[j].duration
+				})
+			}
 			return m, nil
 		}
-		m.table[msg][2] = "pinging..."
-		pinger := probing.New(m.table[msg][1])
+		m.table[msg].status = "..pinging"
+		pinger := probing.New(m.table[msg].ip)
 		pinger.Count = 3
 		pinger.Interval = time.Millisecond * 50
 		pinger.Timeout = time.Second
@@ -104,9 +124,11 @@ func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case pingResult:
 		if msg.err != nil {
-			m.table[msg.index][2] = msg.err.Error()
+			m.table[msg.index].status = msg.err.Error()
 		} else {
-			m.table[msg.index][2] = msg.stats.AvgRtt.Round(time.Microsecond).String()
+			d := msg.stats.AvgRtt.Round(time.Microsecond)
+			m.table[msg.index].duration = d
+			m.table[msg.index].status = d.String()
 		}
 		msg.index++
 		return m, func() tea.Msg {
@@ -132,19 +154,26 @@ func (m *Chooser) View() string {
 	write := func(owner, ip, status string) {
 		buff.WriteString(fmt.Sprintf(m.template, owner, ip, status))
 	}
-	write(`-----`, `--`, `------`)
-	write(`Owner`, `IP`, `Status`)
-	write(`-----`, `--`, `------`)
-	for _, row := range m.table {
-		write(row[0], row[1], row[2])
+	line := func() {
+		write(
+			strings.Repeat(`-`, m.ownerPad),
+			strings.Repeat(`-`, m.ipPad),
+			strings.Repeat(`-`, 9), // len(xxx.xxxms) = 9
+		)
 	}
-	write(`-----`, `--`, `------`)
+
+	line()
+	write(`Owner`, `IP`, `Status`)
+	line()
+	for _, row := range m.table {
+		write(row.owner, row.ip, row.status)
+	}
+	line()
 	buff.WriteRune('\n')
 	if m.workers != 0 {
 		buff.WriteString(fmt.Sprintf("Working: %d\n", m.workers))
 	}
-	buff.WriteString("Press 'q' to quit\n")
-	return buff.String()
+	return buff.String() + "Press 'q' to quit"
 }
 
 func maxLength(s []string) (max int) {
