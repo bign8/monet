@@ -128,7 +128,7 @@ func (m *Chooser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			d := msg.stats.AvgRtt.Round(time.Microsecond)
 			m.table[msg.index].duration = d
-			m.table[msg.index].status = d.String()
+			m.table[msg.index].status = fmt.Sprintf(`%.3fms`, d.Seconds()*1000)
 		}
 		msg.index++
 		return m, func() tea.Msg {
