@@ -368,6 +368,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case goodAndYou:
 		m.warn--
 
+	case error:
+		return m, printf("error: %s\n\thint: socket permission denied? try: sudo sysctl -w net.ipv4.ping_group_range=\"0 2147483647\"", msg.Error())
+
 	case tea.Cmd:
 		// hacky work-around to get pinger to send commands to the model
 		return m, msg
